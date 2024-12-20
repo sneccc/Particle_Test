@@ -19,8 +19,7 @@ namespace Newtonian_Particle_Simulator
         private int frames = 0, FPS;
         protected override void OnRenderFrame(FrameEventArgs e)
         {
-            particleSimulator.Run((float)e.Time);
-
+            particleSimulator.Run((float)e.Time, camera.View, projection, camera.Position);
             SwapBuffers();
             frames++;
             base.OnRenderFrame(e);
@@ -102,6 +101,8 @@ namespace Newtonian_Particle_Simulator
             particleSimulator = new ParticleSimulator(particles);
 
             GC.Collect();
+
+            GL.ClearColor(1.0f, 1.0f, 1.0f, 1.0f); // White background
 
             base.OnLoad(e);
         }
