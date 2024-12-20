@@ -89,13 +89,18 @@ void main()
     
     vec3 finalPosition = position + (right * corner.x + up * corner.y) * particleSize;
 
-    // Color based on velocity
+    // Fixed bright base color independent of speed
+    vec3 baseColor = vec3(1.0, 0.9, 0.7); // Bright warm white base
+    
+    // Add subtle velocity influence
     float speed = length(velocity);
-    outData.Color = vec3(
-        min(0.7 + speed * 0.015, 1.0),
-        min(0.6 + speed * 0.01, 0.9),
-        max(1.0 - speed * 0.02, 0.3)
-    );
+    float speedInfluence = min(speed * 0.01, 0.3); // Limited speed influence
+    
+    // Warm tint for highlights
+    vec3 warmColor = vec3(1.0, 0.8, 0.4);
+    
+    // Combine colors: start with bright base, add warm highlights
+    outData.Color = mix(baseColor, warmColor, speedInfluence);
 
     gl_Position = projViewMatrix * vec4(finalPosition, 1.0);
 }
