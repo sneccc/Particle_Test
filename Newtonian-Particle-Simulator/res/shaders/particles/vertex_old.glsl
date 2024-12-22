@@ -25,13 +25,12 @@ layout(location = 3) uniform float isRunning;
 layout(location = 4) uniform mat4 projViewMatrix;
 layout(location = 5) uniform float particleSize;
 layout(location = 6) uniform vec3 cameraPos;
-layout(location = 7) uniform int numTextures;
 
 out InOutVars
 {
     vec2 TexCoord;
-    vec3 Color;
     float TextureLayer;
+    vec3 Color;
 } outData;
 
 vec3 PackedVec3ToVec3(PackedVector3 vec);
@@ -57,8 +56,9 @@ void main()
         vec2(1.0, 0.0)
     );
     
-    vec2 corner = corners[cornerIndex] * particleSize;
+    vec2 corner = corners[cornerIndex];
     outData.TexCoord = texCoords[cornerIndex];
+    outData.TextureLayer = float(particleIndex % 4);
 
     // Get particle data
     PackedVector3 packedPosition = particleSSBO.Particles[particleIndex].Position;
@@ -104,8 +104,6 @@ void main()
     // Combine colors: start with bright base, add warm highlights
     outData.Color = mix(baseColor, warmColor, speedInfluence);
 
-    outData.TextureLayer = float(particleIndex % max(numTextures, 1));
-
     gl_Position = projViewMatrix * vec4(finalPosition, 1.0);
 }
 
@@ -117,14 +115,4 @@ vec3 PackedVec3ToVec3(PackedVector3 vec)
 PackedVector3 Vec3ToPackedVec3(vec3 vec)
 {
     return PackedVector3(vec.x, vec.y, vec.z);
-}
-
-uint hash(uint x)
-{
-    x += (x << 10u);
-    x ^= (x >>  6u);
-    x += (x <<  3u);
-    x ^= (x >> 11u);
-    x += (x << 15u);
-    return x;
 }

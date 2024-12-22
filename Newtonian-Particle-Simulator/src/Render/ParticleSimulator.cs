@@ -13,7 +13,7 @@ namespace Newtonian_Particle_Simulator.Render
         private readonly BufferObject particleBuffer;
         private readonly BufferObject indexBuffer;
         private readonly ShaderProgram shaderProgram;
-        private readonly TextureObject particleTexture;
+        private readonly TextureArrayObject particleTextures;
 
         public unsafe ParticleSimulator(Particle[] particles)
         {
@@ -23,6 +23,9 @@ namespace Newtonian_Particle_Simulator.Render
                 new Shader(ShaderType.VertexShader, File.ReadAllText("res/shaders/particles/vertex.glsl")),
                 new Shader(ShaderType.FragmentShader, File.ReadAllText("res/shaders/particles/fragment.glsl")));
 
+            int textureLocation = GL.GetUniformLocation(shaderProgram.ID, "particleTextures");
+            GL.Uniform1(textureLocation, 0); // Texture unit 0
+
             particleBuffer = new BufferObject(BufferRangeTarget.ShaderStorageBuffer, 0);
             particleBuffer.ImmutableAllocate(sizeof(Particle) * (nint)NumParticles, particles[0], BufferStorageFlags.None);
 
@@ -31,12 +34,12 @@ namespace Newtonian_Particle_Simulator.Render
             {
                 uint baseVertex = i * 4;
                 uint baseIndex = i * 6;
-                
+
                 // First triangle
                 indices[baseIndex + 0] = baseVertex + 0;
                 indices[baseIndex + 1] = baseVertex + 1;
                 indices[baseIndex + 2] = baseVertex + 2;
-                
+
                 // Second triangle
                 indices[baseIndex + 3] = baseVertex + 2;
                 indices[baseIndex + 4] = baseVertex + 1;
@@ -49,15 +52,27 @@ namespace Newtonian_Particle_Simulator.Render
                 indexBuffer.ImmutableAllocate(sizeof(uint) * indices.Length, (IntPtr)ptr, BufferStorageFlags.None);
             }
 
-            particleTexture = new TextureObject("res/textures/particle.png");
-            
+            try
+            {
+                particleTextures = TextureArrayObject.LoadFromDirectory("res/textures/particles");
+                Console.WriteLine($"Found {particleTextures.LayerCount} textures");
+                shaderProgram.Upload("numTextures", particleTextures.LayerCount);  // This line was missing!
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to load particle textures: {ex.Message}");
+                particleTextures = new TextureArrayObject(new[] { "res/textures/particle.png" });
+                shaderProgram.Upload("numTextures", 1);
+            }
+
             IsRunning = true;
             GL.Enable(EnableCap.Blend);
             GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
             GL.Enable(EnableCap.PrimitiveRestart);
             GL.PrimitiveRestartIndex(uint.MaxValue);
-            
+
             shaderProgram.Upload(5, 0.3f);
+            shaderProgram.Upload("particleSize", 2.0f);
         }
 
         private bool _isRunning;
@@ -78,12 +93,12 @@ namespace Newtonian_Particle_Simulator.Render
         {
             GL.ClearColor(1.0f, 1.0f, 1.0f, 1.0f);
             GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
-            
+
             // Enable depth testing but keep writing to depth buffer
             GL.Enable(EnableCap.DepthTest);
             GL.DepthMask(true);
             GL.DepthFunc(DepthFunction.Lequal);
-            
+
             // Set up blending for opaque parts
             GL.Enable(EnableCap.Blend);
             GL.BlendEquation(BlendEquationMode.FuncAdd);
@@ -93,17 +108,19 @@ namespace Newtonian_Particle_Simulator.Render
                 BlendingFactorSrc.One,
                 BlendingFactorDest.One
             );
-            
+
             shaderProgram.Use();
-            particleTexture.Use(TextureUnit.Texture0);
-            
+            int textureLocation = GL.GetUniformLocation(shaderProgram.ID, "particleTextures");
+            GL.Uniform1(textureLocation, 0); // Texture unit 0
+            particleTextures.Use(TextureUnit.Texture0);
+
             shaderProgram.Upload(0, dT);
             shaderProgram.Upload(4, view * projection);
             shaderProgram.Upload(6, camPos);
-            
+
             GL.BindBuffer(BufferTarget.ElementArrayBuffer, indexBuffer.ID);
             GL.DrawElements(PrimitiveType.Triangles, NumParticles * 6, DrawElementsType.UnsignedInt, 0);
-            
+
             GL.MemoryBarrier(MemoryBarrierFlags.ShaderStorageBarrierBit);
         }
 
@@ -139,10 +156,16 @@ namespace Newtonian_Particle_Simulator.Render
 
         public void Dispose()
         {
-            particleTexture?.Dispose();
+            particleTextures?.Dispose();
             shaderProgram?.Dispose();
             particleBuffer?.Dispose();
             indexBuffer?.Dispose();
+        }
+
+        public void SetParticleSize(float size)
+        {
+            shaderProgram.Use();
+            shaderProgram.Upload("particleSize", size);
         }
     }
 }
