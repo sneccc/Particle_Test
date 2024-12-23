@@ -5,9 +5,16 @@ using OpenTK.Input;
 using OpenTK.Graphics;
 using OpenTK.Graphics.OpenGL4;
 using Newtonian_Particle_Simulator.Render;
+using System.IO;
 
 namespace Newtonian_Particle_Simulator
 {
+    public enum PositionLoadingMode
+    {
+        Random,
+        FromNPY
+    }
+
     class MainWindow : GameWindow
     {
         public MainWindow() 
@@ -58,7 +65,6 @@ namespace Newtonian_Particle_Simulator
                 if (KeyboardManager.IsKeyTouched(Key.F11))
                     WindowState = WindowState == WindowState.Normal ? WindowState.Fullscreen : WindowState.Normal;
 
-
                 particleSimulator.ProcessInputs(this, camera.Position, camera.View, projection);
                 if (!CursorVisible)
                     camera.ProcessInputs((float)e.Time);
@@ -72,6 +78,7 @@ namespace Newtonian_Particle_Simulator
 
         private readonly Stopwatch fpsTimer = Stopwatch.StartNew();
         private ParticleSimulator particleSimulator;
+
         protected override void OnLoad(EventArgs e)
         {
             Console.WriteLine($"OpenGL: {Helper.APIVersion}");
@@ -87,23 +94,74 @@ namespace Newtonian_Particle_Simulator
             VSync = VSyncMode.Off;
 
             int numParticles;
-            do
-                Console.Write($"Number of particles: "); // 8388480
-            while ((!int.TryParse(Console.ReadLine(), out numParticles)) || numParticles < 0);
+            PositionLoadingMode loadingMode;
+            string folderPath = "";
 
-            Random rng = new Random();
-            Particle[] particles = new Particle[numParticles];
-            for (int i = 0; i < particles.Length; i++)
+            Console.WriteLine("Select position loading mode:");
+            Console.WriteLine("0 - Random positions");
+            Console.WriteLine("1 - Load from embeddings folder");
+            
+            while (!Enum.TryParse(Console.ReadLine(), out loadingMode) || !Enum.IsDefined(typeof(PositionLoadingMode), loadingMode))
             {
-                particles[i].Position = new Vector3(rng.NextSingle() * 100 - 50, rng.NextSingle() * 100 - 50, -rng.NextSingle() * 100);
-                //particles[i].Position = Helper.RandomUnitVector(rng) * 50.0f;
+                Console.WriteLine("Invalid input. Please enter 0 or 1.");
             }
-            particleSimulator = new ParticleSimulator(particles);
+
+            if (loadingMode == PositionLoadingMode.FromNPY)
+            {
+                Console.Write("Enter folder path containing image_embeddings.npy and file_paths.npy: ");
+                folderPath = Console.ReadLine();
+                while (!Directory.Exists(folderPath) || 
+                       !File.Exists(Path.Combine(folderPath, "image_embeddings.npy")) || 
+                       !File.Exists(Path.Combine(folderPath, "file_paths.npy")))
+                {
+                    Console.WriteLine("Invalid folder path or missing required files. Please try again:");
+                    folderPath = Console.ReadLine();
+                }
+
+                int maxImages;
+                Console.Write("Enter number of images to load (0 for all): ");
+                while (!int.TryParse(Console.ReadLine(), out maxImages) || maxImages < 0)
+                {
+                    Console.WriteLine("Please enter a valid number (0 or greater):");
+                }
+
+                var embeddingData = EmbeddingLoader.LoadFromFolder(folderPath, maxEntries: maxImages);
+                numParticles = embeddingData.Positions.Length;
+                Console.WriteLine($"Processing {numParticles} particles...");
+
+                Particle[] particles = new Particle[numParticles];
+                for (int i = 0; i < numParticles; i++)
+                {
+                    particles[i].Position = embeddingData.Positions[i];
+                    particles[i].Velocity = Vector3.Zero;
+                }
+
+                particleSimulator = new ParticleSimulator(particles, embeddingData.FilePaths);
+            }
+            else
+            {
+                do
+                {
+                    Console.Write($"Number of particles: ");
+                } while ((!int.TryParse(Console.ReadLine(), out numParticles)) || numParticles < 0);
+
+                Particle[] particles = new Particle[numParticles];
+                Random rng = new Random();
+                for (int i = 0; i < particles.Length; i++)
+                {
+                    particles[i].Position = new Vector3(
+                        rng.NextSingle() * 100 - 50,
+                        rng.NextSingle() * 100 - 50,
+                        -rng.NextSingle() * 100
+                    );
+                    particles[i].Velocity = Vector3.Zero;
+                }
+
+                particleSimulator = new ParticleSimulator(particles);
+            }
 
             GC.Collect();
-
             GL.ClearColor(1.0f, 1.0f, 1.0f, 1.0f); // White background
-
             base.OnLoad(e);
         }
 
@@ -117,6 +175,7 @@ namespace Newtonian_Particle_Simulator
 
             base.OnResize(e);
         }
+
         protected override void OnFocusedChanged(EventArgs e)
         {
             if (Focused)

@@ -36,6 +36,29 @@ namespace Newtonian_Particle_Simulator.Render.Objects
             public string FileName;
         }
 
+        private readonly struct TextureUploadBatch
+        {
+            public readonly byte[] Data;
+            public readonly int Layer;
+            public readonly int Width;
+            public readonly int Height;
+
+            public TextureUploadBatch(byte[] data, int layer, int width, int height)
+            {
+                Data = data;
+                Layer = layer;
+                Width = width;
+                Height = height;
+            }
+        }
+
+        private static readonly MemoryAllocator MemoryPool = MemoryAllocator.Create();
+
+        static TextureArrayObject()
+        {
+            SixLabors.ImageSharp.Configuration.Default.MemoryAllocator = MemoryPool;
+        }
+
         public TextureArrayObject(string[] texturePaths)
         {
             if (texturePaths == null || texturePaths.Length == 0)
@@ -55,77 +78,93 @@ namespace Newtonian_Particle_Simulator.Render.Objects
             GL.TexStorage3D(TextureTarget3d.Texture2DArray, 1, SizedInternalFormat.Rgba8, 
                 Width, Height, LayerCount);
 
-            // Process textures in parallel
+            // Pre-allocate layer data arrays
+            var layerDataPool = new ConcurrentDictionary<int, byte[]>();
+            for (int i = 0; i < LayerCount; i++)
+            {
+                layerDataPool[i] = new byte[Width * Height * 4];
+            }
+
+            // Process textures in parallel with shared configuration
             var processedTextures = new ConcurrentDictionary<int, ProcessedTexture>();
             var options = new ParallelOptions { MaxDegreeOfParallelism = OPTIMAL_BATCH_SIZE };
 
             Console.WriteLine($"Processing textures using {OPTIMAL_BATCH_SIZE} parallel threads");
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
-            Parallel.For(0, TextureCount, options, (i) =>
+            // Process textures in parallel batches
+            var batches = texturePaths
+                .Select((path, index) => new { path, index })
+                .GroupBy(x => x.index / OPTIMAL_BATCH_SIZE)
+                .Select(g => g.ToList());
+
+            foreach (var batch in batches)
             {
-                try
+                Parallel.ForEach(batch, options, item =>
                 {
-                    using (var image = Image.Load<Rgba32>(texturePaths[i]))
+                    try
                     {
-                        // Calculate atlas position
-                        int atlasLayer = i / TEXTURES_PER_ATLAS;
-                        int localIndex = i % TEXTURES_PER_ATLAS;
-                        int atlasX = (localIndex % TEXTURES_PER_ROW) * TEXTURE_SIZE;
-                        int atlasY = (localIndex / TEXTURES_PER_ROW) * TEXTURE_SIZE;
-
-                        // Process image
-                        image.Mutate(x => x.Resize(TEXTURE_SIZE, TEXTURE_SIZE));
-                        byte[] imageData = new byte[TEXTURE_SIZE * TEXTURE_SIZE * 4];
-                        image.CopyPixelDataTo(imageData);
-
-                        processedTextures[i] = new ProcessedTexture
+                        using (var image = Image.Load<Rgba32>(item.path))
                         {
-                            Data = imageData,
-                            AtlasX = atlasX,
-                            AtlasY = atlasY,
-                            Layer = atlasLayer,
-                            FileName = Path.GetFileName(texturePaths[i])
-                        };
+                            // Calculate atlas position
+                            int atlasLayer = item.index / TEXTURES_PER_ATLAS;
+                            int localIndex = item.index % TEXTURES_PER_ATLAS;
+                            int atlasX = (localIndex % TEXTURES_PER_ROW) * TEXTURE_SIZE;
+                            int atlasY = (localIndex / TEXTURES_PER_ROW) * TEXTURE_SIZE;
+
+                            // Process image
+                            image.Mutate(x => x.Resize(TEXTURE_SIZE, TEXTURE_SIZE));
+                            
+                            // Get layer data array from pool
+                            var layerData = layerDataPool[atlasLayer];
+                            
+                            // Copy directly to the layer array
+                            var imageData = new byte[TEXTURE_SIZE * TEXTURE_SIZE * 4];
+                            image.CopyPixelDataTo(imageData);
+                            CopyTextureToAtlas(imageData, layerData, atlasX, atlasY);
+
+                            processedTextures[item.index] = new ProcessedTexture
+                            {
+                                AtlasX = atlasX,
+                                AtlasY = atlasY,
+                                Layer = atlasLayer,
+                                FileName = Path.GetFileName(item.path)
+                            };
+                        }
                     }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Warning: Failed to load texture {texturePaths[i]}: {ex.Message}");
-                    processedTextures[i] = CreateFallbackTexture(i);
-                }
-            });
-
-            // Upload textures to GPU in batches by layer
-            var texturesByLayer = processedTextures.Values
-                .GroupBy(t => t.Layer)
-                .OrderBy(g => g.Key);
-
-            foreach (var layerGroup in texturesByLayer)
-            {
-                var layer = layerGroup.Key;
-                var layerData = new byte[Width * Height * 4];
-
-                // Combine all textures for this layer
-                foreach (var texture in layerGroup)
-                {
-                    CopyTextureToAtlas(texture.Data, layerData, texture.AtlasX, texture.AtlasY);
-                    Console.WriteLine($"Placing texture {texture.FileName} at position ({texture.AtlasX}, {texture.AtlasY}) in layer {layer}");
-                }
-
-                // Upload layer to GPU
-                unsafe
-                {
-                    fixed (void* ptr = layerData)
+                    catch (Exception ex)
                     {
-                        GL.TexSubImage3D(TextureTarget.Texture2DArray, 0,
-                            0, 0, layer,
-                            Width, Height, 1,
-                            OpenTK.Graphics.OpenGL4.PixelFormat.Rgba,
-                            PixelType.UnsignedByte,
-                            (IntPtr)ptr);
+                        Console.WriteLine($"Warning: Failed to load texture {item.path}: {ex.Message}");
+                        processedTextures[item.index] = CreateFallbackTexture(item.index);
+                    }
+                });
+
+                // Upload completed batch to GPU
+                foreach (var layerGroup in processedTextures.Values.GroupBy(t => t.Layer))
+                {
+                    var layer = layerGroup.Key;
+                    var layerData = layerDataPool[layer];
+
+                    // Upload layer to GPU
+                    unsafe
+                    {
+                        fixed (void* ptr = layerData)
+                        {
+                            GL.TexSubImage3D(TextureTarget.Texture2DArray, 0,
+                                0, 0, layer,
+                                Width, Height, 1,
+                                OpenTK.Graphics.OpenGL4.PixelFormat.Rgba,
+                                PixelType.UnsignedByte,
+                                (IntPtr)ptr);
+                        }
                     }
                 }
+            }
+
+            // Clean up
+            foreach (var layerData in layerDataPool.Values)
+            {
+                layerDataPool.TryRemove(layerData.GetHashCode(), out _);
             }
 
             stopwatch.Stop();

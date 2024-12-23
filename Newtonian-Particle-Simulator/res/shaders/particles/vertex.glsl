@@ -1,7 +1,10 @@
 #version 430 core
 #define EPSILON 0.001
 const float DRAG_COEF = log(0.998) * 176.0;
-const int TEXTURES_PER_ATLAS = 256; // 16x16 textures per atlas layer
+const int ATLAS_SIZE = 4096;
+const int TEXTURE_SIZE = 256;
+const int TEXTURES_PER_ROW = ATLAS_SIZE / TEXTURE_SIZE;
+const int TEXTURES_PER_ATLAS = (ATLAS_SIZE / TEXTURE_SIZE) * (ATLAS_SIZE / TEXTURE_SIZE);
 
 struct PackedVector3
 {
@@ -46,11 +49,10 @@ void getAtlasUV(int textureIndex, out vec2 uvMin, out vec2 uvMax, out float laye
     // Calculate which atlas layer and position within the layer
     int atlasLayer = textureIndex / TEXTURES_PER_ATLAS;
     int localIndex = textureIndex % TEXTURES_PER_ATLAS;
-    int texPerRow = int(sqrt(float(TEXTURES_PER_ATLAS)));
     
-    float texSize = 1.0 / float(texPerRow);
-    float atlasX = float(localIndex % texPerRow) * texSize;
-    float atlasY = float(localIndex / texPerRow) * texSize;
+    float texSize = float(TEXTURE_SIZE) / float(ATLAS_SIZE);
+    float atlasX = float(localIndex % TEXTURES_PER_ROW) * texSize;
+    float atlasY = float(localIndex / TEXTURES_PER_ROW) * texSize;
     
     uvMin = vec2(atlasX, atlasY);
     uvMax = vec2(atlasX + texSize, atlasY + texSize);
@@ -120,18 +122,8 @@ void main()
     
     vec3 finalPosition = position + (right * corner.x + up * corner.y) * particleSize;
 
-    // Fixed bright base color independent of speed
-    vec3 baseColor = vec3(1.0, 0.9, 0.7); // Bright warm white base
-    
-    // Add subtle velocity influence
-    float speed = length(velocity);
-    float speedInfluence = min(speed * 0.01, 0.3); // Limited speed influence
-    
-    // Warm tint for highlights
-    vec3 warmColor = vec3(1.0, 0.8, 0.4);
-    
-    // Combine colors: start with bright base, add warm highlights
-    outData.Color = mix(baseColor, warmColor, speedInfluence);
+    // Use neutral white color to preserve original image colors
+    outData.Color = vec3(1.0);
 
     gl_Position = projViewMatrix * vec4(finalPosition, 1.0);
 }
