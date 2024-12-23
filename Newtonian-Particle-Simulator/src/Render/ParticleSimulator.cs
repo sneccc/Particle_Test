@@ -94,7 +94,7 @@ namespace Newtonian_Particle_Simulator.Render
             GL.Enable(EnableCap.PrimitiveRestart);
             GL.PrimitiveRestartIndex(uint.MaxValue);
 
-            shaderProgram.Upload("particleSize", 0.5f);
+            shaderProgram.Upload("particleSize", 0.7f);
         }
 
         private bool _isRunning;

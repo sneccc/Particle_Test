@@ -18,7 +18,7 @@ namespace Newtonian_Particle_Simulator.Render
             public Vector3[] Positions { get; set; }
         }
 
-        public static EmbeddingData LoadFromFolder(string folderPath, float scaleFactor = 10.0f, int maxEntries = 0)
+        public static EmbeddingData LoadFromFolder(string folderPath, float scaleFactor = 1.0f, int maxEntries = 0)
         {
             if (!Directory.Exists(folderPath))
                 throw new DirectoryNotFoundException($"Folder not found: {folderPath}");
@@ -36,24 +36,18 @@ namespace Newtonian_Particle_Simulator.Render
             Console.WriteLine($"\nLoaded {embeddings.Length} embeddings and {filePaths.Length} file paths");
             Console.WriteLine($"Each embedding has {embeddings[0].Length} dimensions");
             
-            // Print first embedding's values for verification
-            Console.WriteLine("\nFirst embedding's values:");
-            for (int i = 0; i < Math.Min(10, embeddings[0].Length); i++)
+            if (embeddings[0].Length != 3)
             {
-                Console.Write($"{embeddings[0][i]:F6} ");
+                throw new Exception($"Expected 3D coordinates in NPY file, but got {embeddings[0].Length} dimensions");
             }
-            Console.WriteLine("...");
 
-            Console.WriteLine("\nReducing dimensions with UMAP...");
-            var reducedEmbeddings = ReduceDimensionsWithUMAP(embeddings);
-
-            var positions = new Vector3[reducedEmbeddings.Length];
-            for (int i = 0; i < reducedEmbeddings.Length; i++)
+            var positions = new Vector3[embeddings.Length];
+            for (int i = 0; i < embeddings.Length; i++)
             {
                 positions[i] = new Vector3(
-                    reducedEmbeddings[i][0] * scaleFactor,
-                    reducedEmbeddings[i][1] * scaleFactor,
-                    reducedEmbeddings[i][2] * scaleFactor
+                    embeddings[i][0] * scaleFactor,
+                    embeddings[i][1] * scaleFactor,
+                    embeddings[i][2] * scaleFactor
                 );
             }
 
@@ -65,14 +59,48 @@ namespace Newtonian_Particle_Simulator.Render
             };
         }
 
+        private static float[][] NormalizeEmbeddings(float[][] embeddings)
+        {
+            var normalizedEmbeddings = new float[embeddings.Length][];
+            
+            for (int i = 0; i < embeddings.Length; i++)
+            {
+                normalizedEmbeddings[i] = new float[embeddings[i].Length];
+                
+                // Calculate magnitude
+                float magnitude = 0;
+                for (int j = 0; j < embeddings[i].Length; j++)
+                {
+                    magnitude += embeddings[i][j] * embeddings[i][j];
+                }
+                magnitude = (float)Math.Sqrt(magnitude);
+                
+                // Normalize
+                if (magnitude > 0)
+                {
+                    for (int j = 0; j < embeddings[i].Length; j++)
+                    {
+                        normalizedEmbeddings[i][j] = embeddings[i][j] / magnitude;
+                    }
+                }
+                else
+                {
+                    Array.Copy(embeddings[i], normalizedEmbeddings[i], embeddings[i].Length);
+                }
+            }
+            
+            return normalizedEmbeddings;
+        }
+
         private static float[][] ReduceDimensionsWithUMAP(float[][] vectors)
         {
             Console.WriteLine($"Running UMAP on {vectors.Length} vectors of dimension {vectors[0].Length}");
             
             var umap = new Umap(
                 dimensions: 3,
-                numberOfNeighbors: 5,
-                random: DefaultRandomGenerator.Instance
+                numberOfNeighbors: 15,  // Increased from 5 to 15 for better global structure
+                random: DefaultRandomGenerator.Instance,
+                customNumberOfEpochs: 1000
             );
 
             Console.WriteLine("Initializing UMAP...");
@@ -161,20 +189,41 @@ namespace Newtonian_Particle_Simulator.Render
 
                 Console.WriteLine($"Data type: {dtype}");
                 Console.WriteLine($"Shape string: {shapeStr}");
+                Console.WriteLine($"Raw shape string bytes: {BitConverter.ToString(Encoding.ASCII.GetBytes(shapeStr))}");
 
-                // Parse shape
-                var shapeParts = shapeStr.Trim('(', ')', ' ').Split(',');
-                var shape = new int[shapeParts.Length];
-                for (int i = 0; i < shapeParts.Length; i++)
+                // Parse shape - handle both (N, 3) and (N,) formats
+                Console.WriteLine($"Before replace: '{shapeStr}'");
+                var noSpaces = shapeStr.Replace(" ", "");
+                Console.WriteLine($"After space removal: '{noSpaces}'");
+                var trimmed = noSpaces.Trim('(', ')', ' ');
+                Console.WriteLine($"After trim: '{trimmed}'");
+                
+                var shapeParts = trimmed.Split(',')
+                    .Select(s => s.Trim())
+                    .Where(s => !string.IsNullOrWhiteSpace(s))
+                    .ToArray();
+
+                Console.WriteLine($"Shape parts after split: [{string.Join("', '", shapeParts)}]");
+                
+                // Parse the numbers from the shape parts
+                var shape = shapeParts.Select(s => 
                 {
-                    if (!string.IsNullOrWhiteSpace(shapeParts[i]))
-                        shape[i] = int.Parse(shapeParts[i].Trim());
-                }
-
+                    Console.WriteLine($"Parsing shape part: '{s}'");
+                    return int.Parse(s.Trim());
+                }).ToArray();
                 Console.WriteLine($"Parsed shape: [{string.Join(", ", shape)}]");
 
+                // For embeddings file, we expect (N, 3)
+                if (Path.GetFileName(filePath) == "image_embeddings.npy")
+                {
+                    if (shape.Length != 2 || shape[1] != 3)
+                    {
+                        throw new Exception($"Expected embeddings array with shape (N, 3), got shape: [{string.Join(", ", shape)}], original shape string: '{shapeStr}'");
+                    }
+                }
+
                 var numElements = maxEntries > 0 ? Math.Min(maxEntries, shape[0]) : shape[0];
-                var vectorSize = shape.Length > 1 ? shape[1] : 1;
+                var vectorSize = shape[1];  // We know it's a 2D array now
                 var result = new float[numElements][];
 
                 var isLittleEndian = dtype.StartsWith("<");
@@ -183,14 +232,15 @@ namespace Newtonian_Particle_Simulator.Render
                 Console.WriteLine($"Reading {numElements} vectors of size {vectorSize}");
                 Console.WriteLine($"Data is {(isLittleEndian ? "little" : "big")} endian, type: {dataType}");
 
+                long dataStart = stream.Position;
+
                 // Try to read first few values for debugging
                 try
                 {
-                    long dataStart = stream.Position;
-                    Console.WriteLine("\nFirst few vectors (showing first 10 values each):");
+                    Console.WriteLine("\nFirst few vectors (showing all values):");
                     for (int i = 0; i < Math.Min(3, numElements); i++)
                     {
-                        result[i] = new float[vectorSize];
+                        result[i] = new float[vectorSize];  // Initialize the array
                         for (int j = 0; j < vectorSize; j++)
                         {
                             switch (dataType)
@@ -205,19 +255,27 @@ namespace Newtonian_Particle_Simulator.Render
                                     throw new Exception($"Unsupported data type: {dataType}");
                             }
                         }
-                        Console.WriteLine($"Vector {i}: [{string.Join(", ", result[i].Take(10).Select(v => v.ToString("F6")))}]...");
+                        Console.WriteLine($"Vector {i}: [{string.Join(", ", result[i].Select(v => v.ToString("F6")))}]");
                     }
                     stream.Position = dataStart;
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"Error reading sample values: {ex.Message}");
+                    stream.Position = dataStart;  // Make sure we reset position even on error
                 }
 
-                // Read all data
+                Console.WriteLine("\nInitializing arrays...");
+                // Initialize all arrays before reading
                 for (int i = 0; i < numElements; i++)
                 {
                     result[i] = new float[vectorSize];
+                }
+
+                Console.WriteLine("Reading all embeddings...");
+                // Read all data
+                for (int i = 0; i < numElements; i++)
+                {
                     for (int j = 0; j < vectorSize; j++)
                     {
                         switch (dataType)
@@ -232,7 +290,15 @@ namespace Newtonian_Particle_Simulator.Render
                                 throw new Exception($"Unsupported data type: {dataType}");
                         }
                     }
+                    
+                    // Add progress indicator for large datasets
+                    if (i % 1000 == 0 || i == numElements - 1)
+                    {
+                        Console.WriteLine($"Loading embeddings: {i + 1}/{numElements} ({((i + 1) * 100.0f / numElements):F1}%)");
+                    }
                 }
+
+                Console.WriteLine("Finished reading embeddings.");
 
                 return result;
             }
@@ -241,15 +307,45 @@ namespace Newtonian_Particle_Simulator.Render
         private static Dictionary<string, string> ParseHeaderDict(string headerStr)
         {
             var dict = new Dictionary<string, string>();
-            var parts = headerStr.Trim('{', '}', ' ').Split(',');
+            Console.WriteLine($"Parsing header: '{headerStr}'");
             
+            // Remove the curly braces
+            var content = headerStr.Trim('{', '}', ' ');
+            
+            // Split by comma but not within parentheses
+            var parts = new List<string>();
+            var currentPart = "";
+            var parenthesesCount = 0;
+            
+            for (int i = 0; i < content.Length; i++)
+            {
+                char c = content[i];
+                if (c == '(') parenthesesCount++;
+                else if (c == ')') parenthesesCount--;
+                
+                if (c == ',' && parenthesesCount == 0)
+                {
+                    if (!string.IsNullOrWhiteSpace(currentPart))
+                        parts.Add(currentPart);
+                    currentPart = "";
+                }
+                else
+                {
+                    currentPart += c;
+                }
+            }
+            if (!string.IsNullOrWhiteSpace(currentPart))
+                parts.Add(currentPart);
+
             foreach (var part in parts)
             {
-                var keyValue = part.Split(':');
+                Console.WriteLine($"Processing part: '{part}'");
+                var keyValue = part.Split(new[] { ':' }, 2);
                 if (keyValue.Length == 2)
                 {
                     var key = keyValue[0].Trim().Trim('\'');
                     var value = keyValue[1].Trim().Trim('\'');
+                    Console.WriteLine($"Key: '{key}', Value: '{value}'");
                     dict[key] = value;
                 }
             }
@@ -318,9 +414,39 @@ namespace Newtonian_Particle_Simulator.Render
 
                 Console.WriteLine($"Data type: {dtype}");
                 Console.WriteLine($"Shape string: {shapeStr}");
+                Console.WriteLine($"Raw shape string bytes: {BitConverter.ToString(Encoding.ASCII.GetBytes(shapeStr))}");
 
-                // Parse shape
-                var shapeParts = shapeStr.Trim('(', ')', ' ').Split(',');
+                // Parse shape - handle both (N, 3) and (N,) formats
+                Console.WriteLine($"Before replace: '{shapeStr}'");
+                var noSpaces = shapeStr.Replace(" ", "");
+                Console.WriteLine($"After space removal: '{noSpaces}'");
+                var trimmed = noSpaces.Trim('(', ')', ' ');
+                Console.WriteLine($"After trim: '{trimmed}'");
+                
+                var shapeParts = trimmed.Split(',')
+                    .Select(s => s.Trim())
+                    .Where(s => !string.IsNullOrWhiteSpace(s))
+                    .ToArray();
+
+                Console.WriteLine($"Shape parts after split: [{string.Join("', '", shapeParts)}]");
+                
+                // Parse the numbers from the shape parts
+                var shape = shapeParts.Select(s => 
+                {
+                    Console.WriteLine($"Parsing shape part: '{s}'");
+                    return int.Parse(s.Trim());
+                }).ToArray();
+                Console.WriteLine($"Parsed shape: [{string.Join(", ", shape)}]");
+
+                // For embeddings file, we expect (N, 3)
+                if (Path.GetFileName(filePath) == "image_embeddings.npy")
+                {
+                    if (shape.Length != 2 || shape[1] != 3)
+                    {
+                        throw new Exception($"Expected embeddings array with shape (N, 3), got shape: [{string.Join(", ", shape)}], original shape string: '{shapeStr}'");
+                    }
+                }
+
                 var numStrings = maxEntries > 0 ? Math.Min(maxEntries, int.Parse(shapeParts[0].Trim())) : int.Parse(shapeParts[0].Trim());
                 Console.WriteLine($"Number of strings to read: {numStrings}");
 
