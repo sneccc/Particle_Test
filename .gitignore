@@ -351,4 +351,4 @@ MigrationBackup/
 
 
 # Particle textures directory
-Newtonian-Particle-Simulator/src/Render/textures/particles/*
+Newtonian-Particle-Simulator/res/textures/particles/*
