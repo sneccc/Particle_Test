@@ -1,6 +1,7 @@
 #version 430 core
 #define EPSILON 0.001
 const float DRAG_COEF = log(0.998) * 176.0;
+const int TEXTURES_PER_ATLAS = 256; // 16x16 textures per atlas layer
 
 struct PackedVector3
 {
@@ -37,28 +38,56 @@ out InOutVars
 vec3 PackedVec3ToVec3(PackedVector3 vec);
 PackedVector3 Vec3ToPackedVec3(vec3 vec);
 
+void getAtlasUV(int textureIndex, out vec2 uvMin, out vec2 uvMax, out float layer)
+{
+    // Ensure texture index is within bounds
+    textureIndex = textureIndex % numTextures;
+    
+    // Calculate which atlas layer and position within the layer
+    int atlasLayer = textureIndex / TEXTURES_PER_ATLAS;
+    int localIndex = textureIndex % TEXTURES_PER_ATLAS;
+    int texPerRow = int(sqrt(float(TEXTURES_PER_ATLAS)));
+    
+    float texSize = 1.0 / float(texPerRow);
+    float atlasX = float(localIndex % texPerRow) * texSize;
+    float atlasY = float(localIndex / texPerRow) * texSize;
+    
+    uvMin = vec2(atlasX, atlasY);
+    uvMax = vec2(atlasX + texSize, atlasY + texSize);
+    layer = float(atlasLayer);
+}
+
 void main()
 {
     // Calculate which particle and which vertex of the quad we're processing
     int particleIndex = gl_VertexID >> 2;
     int cornerIndex = gl_VertexID & 3;
     
-    // Quad corners and texture coordinates
+    // Quad corners
     vec2 corners[4] = vec2[4](
         vec2(-1.0, -1.0),
         vec2( 1.0, -1.0),
         vec2(-1.0,  1.0),
         vec2( 1.0,  1.0)
     );
-    vec2 texCoords[4] = vec2[4](
-        vec2(0.0, 1.0),
-        vec2(1.0, 1.0),
-        vec2(0.0, 0.0),
-        vec2(1.0, 0.0)
-    );
     
     vec2 corner = corners[cornerIndex] * particleSize;
+
+    // Calculate texture coordinates from atlas
+    vec2 uvMin, uvMax;
+    float layer;
+    getAtlasUV(particleIndex, uvMin, uvMax, layer);
+    
+    // Map corner index to atlas UV coordinates
+    vec2 texCoords[4] = vec2[4](
+        vec2(uvMin.x, uvMax.y),
+        vec2(uvMax.x, uvMax.y),
+        vec2(uvMin.x, uvMin.y),
+        vec2(uvMax.x, uvMin.y)
+    );
+    
     outData.TexCoord = texCoords[cornerIndex];
+    outData.TextureLayer = layer;
 
     // Get particle data
     PackedVector3 packedPosition = particleSSBO.Particles[particleIndex].Position;
@@ -103,8 +132,6 @@ void main()
     
     // Combine colors: start with bright base, add warm highlights
     outData.Color = mix(baseColor, warmColor, speedInfluence);
-
-    outData.TextureLayer = float(particleIndex % max(numTextures, 1));
 
     gl_Position = projViewMatrix * vec4(finalPosition, 1.0);
 }

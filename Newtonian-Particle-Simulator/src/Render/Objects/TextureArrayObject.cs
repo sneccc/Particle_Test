@@ -1,11 +1,16 @@
 using OpenTK.Graphics.OpenGL4;
 using System;
-using System.Drawing;
-using System.Drawing.Imaging;
-using System.Drawing.Drawing2D;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
+using SixLabors.ImageSharp.Processing;
+using SixLabors.ImageSharp.Memory;
+using OpenTK;
+using Buffer = System.Buffer;
 
 namespace Newtonian_Particle_Simulator.Render.Objects
 {
@@ -13,197 +18,179 @@ namespace Newtonian_Particle_Simulator.Render.Objects
     {
         public readonly int ID;
         public readonly int LayerCount;
+        public readonly int TextureCount;
         public readonly int Width;
         public readonly int Height;
+        private const int TEXTURE_SIZE = 256;
+        private const int ATLAS_SIZE = 4096;
+        private const int TEXTURES_PER_ROW = ATLAS_SIZE / TEXTURE_SIZE;
+        private const int TEXTURES_PER_ATLAS = (ATLAS_SIZE / TEXTURE_SIZE) * (ATLAS_SIZE / TEXTURE_SIZE);
+        private const int OPTIMAL_BATCH_SIZE = 24; // Match your thread count
 
-        public TextureArrayObject(string[] texturePaths, int? forcedWidth = null, int? forcedHeight = null)
+        private class ProcessedTexture
+        {
+            public byte[] Data;
+            public int AtlasX;
+            public int AtlasY;
+            public int Layer;
+            public string FileName;
+        }
+
+        public TextureArrayObject(string[] texturePaths)
         {
             if (texturePaths == null || texturePaths.Length == 0)
                 throw new ArgumentException("Must provide at least one texture path");
 
-            LayerCount = texturePaths.Length;
+            TextureCount = texturePaths.Length;
+            Console.WriteLine($"Attempting to load {TextureCount} textures using parallel processing");
+
+            // Calculate dimensions
+            LayerCount = (int)Math.Ceiling((double)TextureCount / TEXTURES_PER_ATLAS);
+            Width = ATLAS_SIZE;
+            Height = ATLAS_SIZE;
+
+            // Create and configure the texture array
             ID = GL.GenTexture();
-
-            // First pass: determine dimensions if not forced
-            if (!forcedWidth.HasValue || !forcedHeight.HasValue)
-            {
-                DetermineOptimalDimensions(texturePaths, out int maxWidth, out int maxHeight);
-                Width = forcedWidth ?? maxWidth;
-                Height = forcedHeight ?? maxHeight;
-            }
-            else
-            {
-                Width = forcedWidth.Value;
-                Height = forcedHeight.Value;
-            }
-
             GL.BindTexture(TextureTarget.Texture2DArray, ID);
-
-            // Allocate storage for the texture array
-            GL.TexStorage3D(TextureTarget3d.Texture2DArray, 1, SizedInternalFormat.Rgba8,
+            GL.TexStorage3D(TextureTarget3d.Texture2DArray, 1, SizedInternalFormat.Rgba8, 
                 Width, Height, LayerCount);
 
-            // Load and process each texture
-            for (int i = 0; i < texturePaths.Length; i++)
+            // Process textures in parallel
+            var processedTextures = new ConcurrentDictionary<int, ProcessedTexture>();
+            var options = new ParallelOptions { MaxDegreeOfParallelism = OPTIMAL_BATCH_SIZE };
+
+            Console.WriteLine($"Processing textures using {OPTIMAL_BATCH_SIZE} parallel threads");
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+            Parallel.For(0, TextureCount, options, (i) =>
             {
                 try
                 {
-                    using (var processedImage = LoadAndProcessImage(texturePaths[i], Width, Height))
+                    using (var image = Image.Load<Rgba32>(texturePaths[i]))
                     {
-                        var data = processedImage.LockBits(
-                            new Rectangle(0, 0, Width, Height),
-                            ImageLockMode.ReadOnly,
-                            System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                        // Calculate atlas position
+                        int atlasLayer = i / TEXTURES_PER_ATLAS;
+                        int localIndex = i % TEXTURES_PER_ATLAS;
+                        int atlasX = (localIndex % TEXTURES_PER_ROW) * TEXTURE_SIZE;
+                        int atlasY = (localIndex / TEXTURES_PER_ROW) * TEXTURE_SIZE;
 
-                        GL.TexSubImage3D(TextureTarget.Texture2DArray, 0,
-                            0, 0, i, // xoffset, yoffset, layer
-                            Width, Height, 1, // width, height, depth
-                            OpenTK.Graphics.OpenGL4.PixelFormat.Bgra,
-                            PixelType.UnsignedByte,
-                            data.Scan0);
+                        // Process image
+                        image.Mutate(x => x.Resize(TEXTURE_SIZE, TEXTURE_SIZE));
+                        byte[] imageData = new byte[TEXTURE_SIZE * TEXTURE_SIZE * 4];
+                        image.CopyPixelDataTo(imageData);
 
-                        processedImage.UnlockBits(data);
+                        processedTextures[i] = new ProcessedTexture
+                        {
+                            Data = imageData,
+                            AtlasX = atlasX,
+                            AtlasY = atlasY,
+                            Layer = atlasLayer,
+                            FileName = Path.GetFileName(texturePaths[i])
+                        };
                     }
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"Warning: Failed to load texture {texturePaths[i]}: {ex.Message}");
-                    // Load a fallback texture (pink checkerboard pattern)
-                    using (var fallbackTexture = CreateFallbackTexture(Width, Height))
+                    processedTextures[i] = CreateFallbackTexture(i);
+                }
+            });
+
+            // Upload textures to GPU in batches by layer
+            var texturesByLayer = processedTextures.Values
+                .GroupBy(t => t.Layer)
+                .OrderBy(g => g.Key);
+
+            foreach (var layerGroup in texturesByLayer)
+            {
+                var layer = layerGroup.Key;
+                var layerData = new byte[Width * Height * 4];
+
+                // Combine all textures for this layer
+                foreach (var texture in layerGroup)
+                {
+                    CopyTextureToAtlas(texture.Data, layerData, texture.AtlasX, texture.AtlasY);
+                    Console.WriteLine($"Placing texture {texture.FileName} at position ({texture.AtlasX}, {texture.AtlasY}) in layer {layer}");
+                }
+
+                // Upload layer to GPU
+                unsafe
+                {
+                    fixed (void* ptr = layerData)
                     {
-                        var data = fallbackTexture.LockBits(
-                            new Rectangle(0, 0, Width, Height),
-                            ImageLockMode.ReadOnly,
-                            System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-
                         GL.TexSubImage3D(TextureTarget.Texture2DArray, 0,
-                            0, 0, i,
+                            0, 0, layer,
                             Width, Height, 1,
-                            OpenTK.Graphics.OpenGL4.PixelFormat.Bgra,
+                            OpenTK.Graphics.OpenGL4.PixelFormat.Rgba,
                             PixelType.UnsignedByte,
-                            data.Scan0);
-
-                        fallbackTexture.UnlockBits(data);
+                            (IntPtr)ptr);
                     }
                 }
             }
 
-            // Set texture parameters
+            stopwatch.Stop();
+            SetTextureParameters();
+            Console.WriteLine($"Successfully loaded {TextureCount} textures into {LayerCount} atlas layers in {stopwatch.ElapsedMilliseconds}ms");
+        }
+
+        private ProcessedTexture CreateFallbackTexture(int index)
+        {
+            int atlasLayer = index / TEXTURES_PER_ATLAS;
+            int localIndex = index % TEXTURES_PER_ATLAS;
+            int atlasX = (localIndex % TEXTURES_PER_ROW) * TEXTURE_SIZE;
+            int atlasY = (localIndex / TEXTURES_PER_ROW) * TEXTURE_SIZE;
+
+            byte[] imageData = new byte[TEXTURE_SIZE * TEXTURE_SIZE * 4];
+            for (int y = 0; y < TEXTURE_SIZE; y++)
+            {
+                for (int x = 0; x < TEXTURE_SIZE; x++)
+                {
+                    int pixelIndex = (y * TEXTURE_SIZE + x) * 4;
+                    bool isEven = ((x / 32) + (y / 32)) % 2 == 0;
+                    if (isEven)
+                    {
+                        imageData[pixelIndex + 0] = 255; // R
+                        imageData[pixelIndex + 1] = 192; // G
+                        imageData[pixelIndex + 2] = 203; // B
+                        imageData[pixelIndex + 3] = 255; // A
+                    }
+                    else
+                    {
+                        imageData[pixelIndex + 0] = 255;
+                        imageData[pixelIndex + 1] = 192;
+                        imageData[pixelIndex + 2] = 203;
+                        imageData[pixelIndex + 3] = 0;
+                    }
+                }
+            }
+
+            return new ProcessedTexture
+            {
+                Data = imageData,
+                AtlasX = atlasX,
+                AtlasY = atlasY,
+                Layer = atlasLayer,
+                FileName = $"fallback_{index}"
+            };
+        }
+
+        private void CopyTextureToAtlas(byte[] textureData, byte[] atlasData, int atlasX, int atlasY)
+        {
+            for (int y = 0; y < TEXTURE_SIZE; y++)
+            {
+                int sourceOffset = y * TEXTURE_SIZE * 4;
+                int destOffset = ((atlasY + y) * Width + atlasX) * 4;
+                Buffer.BlockCopy(textureData, sourceOffset, atlasData, destOffset, TEXTURE_SIZE * 4);
+            }
+        }
+
+        private void SetTextureParameters()
+        {
+            GL.BindTexture(TextureTarget.Texture2DArray, ID);
             GL.TexParameter(TextureTarget.Texture2DArray, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
             GL.TexParameter(TextureTarget.Texture2DArray, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
             GL.TexParameter(TextureTarget.Texture2DArray, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
             GL.TexParameter(TextureTarget.Texture2DArray, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
-        }
-
-        private void DetermineOptimalDimensions(string[] paths, out int maxWidth, out int maxHeight)
-        {
-            maxWidth = 0;
-            maxHeight = 0;
-
-            foreach (var path in paths)
-            {
-                try
-                {
-                    using (var image = LoadImageFromAnyFormat(path))
-                    {
-                        maxWidth = Math.Max(maxWidth, image.Width);
-                        maxHeight = Math.Max(maxHeight, image.Height);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Warning: Failed to load {path} for dimension check: {ex.Message}");
-                }
-            }
-
-            // Ensure we have at least some minimal dimensions
-            maxWidth = Math.Max(maxWidth, 16);
-            maxHeight = Math.Max(maxHeight, 16);
-
-            // Round up to nearest power of 2 if not already
-            maxWidth = NextPowerOfTwo(maxWidth);
-            maxHeight = NextPowerOfTwo(maxHeight);
-        }
-
-        private static Bitmap LoadImageFromAnyFormat(string path)
-        {
-            // Handle different file extensions
-            string ext = Path.GetExtension(path).ToLower();
-
-            using (var stream = File.OpenRead(path))
-            {
-                // Special handling for specific formats could go here
-                // For now, we'll let System.Drawing handle what it can
-                return new Bitmap(stream);
-            }
-        }
-
-        private static Bitmap LoadAndProcessImage(string path, int targetWidth, int targetHeight)
-        {
-            using (var originalImage = LoadImageFromAnyFormat(path))
-            {
-                var processedImage = new Bitmap(targetWidth, targetHeight, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-
-                using (var graphics = Graphics.FromImage(processedImage))
-                {
-                    graphics.CompositingMode = CompositingMode.SourceOver;
-                    graphics.CompositingQuality = CompositingQuality.HighQuality;
-                    graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                    graphics.SmoothingMode = SmoothingMode.HighQuality;
-                    graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
-
-                    // Center the image if aspect ratios don't match
-                    float scale = Math.Min((float)targetWidth / originalImage.Width,
-                                         (float)targetHeight / originalImage.Height);
-
-                    float scaledWidth = originalImage.Width * scale;
-                    float scaledHeight = originalImage.Height * scale;
-                    float offsetX = (targetWidth - scaledWidth) / 2;
-                    float offsetY = (targetHeight - scaledHeight) / 2;
-
-                    graphics.Clear(Color.Transparent); // Ensure transparency
-                    graphics.DrawImage(originalImage,
-                        new RectangleF(offsetX, offsetY, scaledWidth, scaledHeight));
-                }
-
-                return processedImage;
-            }
-        }
-
-        private static Bitmap CreateFallbackTexture(int width, int height)
-        {
-            var bitmap = new Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-            using (var graphics = Graphics.FromImage(bitmap))
-            {
-                // Create a checkerboard pattern in pink/transparent
-                int cellSize = Math.Max(width, height) / 8;
-                using (var brush1 = new SolidBrush(Color.FromArgb(255, 255, 192, 203))) // Pink
-                using (var brush2 = new SolidBrush(Color.FromArgb(0, 255, 192, 203))) // Transparent pink
-                {
-                    for (int y = 0; y < height; y += cellSize)
-                    {
-                        for (int x = 0; x < width; x += cellSize)
-                        {
-                            graphics.FillRectangle(
-                                ((x + y) / cellSize) % 2 == 0 ? brush1 : brush2,
-                                x, y, cellSize, cellSize);
-                        }
-                    }
-                }
-            }
-            return bitmap;
-        }
-
-        private static int NextPowerOfTwo(int value)
-        {
-            value--;
-            value |= value >> 1;
-            value |= value >> 2;
-            value |= value >> 4;
-            value |= value >> 8;
-            value |= value >> 16;
-            value++;
-            return value;
         }
 
         public void Use(TextureUnit unit = TextureUnit.Texture0)
@@ -220,22 +207,36 @@ namespace Newtonian_Particle_Simulator.Render.Objects
         public static TextureArrayObject LoadFromDirectory(string directoryPath)
         {
             if (!Directory.Exists(directoryPath))
-            {
-                Console.WriteLine($"Directory not found: {directoryPath}");
                 throw new DirectoryNotFoundException($"Texture directory not found: {directoryPath}");
-            }
 
+            Console.WriteLine($"Loading textures from directory: {directoryPath}");
+            
             var validExtensions = new[] { ".png", ".jpg", ".jpeg", ".bmp", ".gif" };
             var texturePaths = Directory.GetFiles(directoryPath)
                 .Where(file => validExtensions.Contains(Path.GetExtension(file).ToLower()))
+                .OrderBy(file => Path.GetFileName(file))
                 .ToArray();
 
-            Console.WriteLine($"Found texture files: {string.Join(", ", texturePaths)}");
+            Console.WriteLine($"Found {texturePaths.Length} texture files");
 
             if (texturePaths.Length == 0)
                 throw new ArgumentException($"No valid texture files found in {directoryPath}");
 
             return new TextureArrayObject(texturePaths);
+        }
+
+        // Helper method to calculate UV coordinates for a texture in the atlas
+        public static (Vector2 min, Vector2 max) GetAtlasUV(int textureIndex)
+        {
+            int atlasLayer = textureIndex / TEXTURES_PER_ATLAS;
+            int localIndex = textureIndex % TEXTURES_PER_ATLAS;
+            int atlasX = (localIndex % TEXTURES_PER_ROW) * TEXTURE_SIZE;
+            int atlasY = (localIndex / TEXTURES_PER_ROW) * TEXTURE_SIZE;
+
+            return (
+                new Vector2((float)atlasX / ATLAS_SIZE, (float)atlasY / ATLAS_SIZE),
+                new Vector2((float)(atlasX + TEXTURE_SIZE) / ATLAS_SIZE, (float)(atlasY + TEXTURE_SIZE) / ATLAS_SIZE)
+            );
         }
     }
 }

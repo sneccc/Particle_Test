@@ -55,8 +55,8 @@ namespace Newtonian_Particle_Simulator.Render
             try
             {
                 particleTextures = TextureArrayObject.LoadFromDirectory("res/textures/particles");
-                Console.WriteLine($"Found {particleTextures.LayerCount} textures");
-                shaderProgram.Upload("numTextures", particleTextures.LayerCount);  // This line was missing!
+                Console.WriteLine($"Found {particleTextures.TextureCount} textures");
+                shaderProgram.Upload("numTextures", particleTextures.TextureCount);
             }
             catch (Exception ex)
             {
@@ -72,7 +72,7 @@ namespace Newtonian_Particle_Simulator.Render
             GL.PrimitiveRestartIndex(uint.MaxValue);
 
             shaderProgram.Upload(5, 0.3f);
-            shaderProgram.Upload("particleSize", 2.0f);
+            shaderProgram.Upload("particleSize", 0.7f);
         }
 
         private bool _isRunning;

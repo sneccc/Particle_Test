@@ -11,7 +11,7 @@ namespace Newtonian_Particle_Simulator
     class MainWindow : GameWindow
     {
         public MainWindow() 
-            : base(832, 832, new GraphicsMode(0, 0, 0, 0), "Newtonian-Particle-Simulator") { /*WindowState = WindowState.Fullscreen;*/ }
+            : base(832, 832, new GraphicsMode(0, 0, 0, 0), "idk man") { /*WindowState = WindowState.Fullscreen;*/ }
 
         private readonly Camera camera = new Camera(new Vector3(0, 0, 15), new Vector3(0, 1, 0));
         private Matrix4 projection;
@@ -30,7 +30,7 @@ namespace Newtonian_Particle_Simulator
             if (fpsTimer.ElapsedMilliseconds >= 1000)
             {
                 FPS = frames;
-                Title = $"Newtonian-Particle-Simulator FPS: {FPS}";
+                Title = $"shaders ftw, FPS: {FPS}";
                 frames = 0;
                 fpsTimer.Restart();
             }
