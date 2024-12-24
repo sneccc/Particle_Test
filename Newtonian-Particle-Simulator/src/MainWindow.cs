@@ -6,6 +6,7 @@ using OpenTK.Graphics;
 using OpenTK.Graphics.OpenGL4;
 using Newtonian_Particle_Simulator.Render;
 using System.IO;
+using ImGuiNET;
 
 namespace Newtonian_Particle_Simulator
 {
@@ -17,6 +18,9 @@ namespace Newtonian_Particle_Simulator
 
     class MainWindow : GameWindow
     {
+        private ImGuiController _imGuiController;
+        private float _scaleFactor = 1.0f;
+
         public MainWindow() 
             : base(832, 832, new GraphicsMode(0, 0, 0, 0), "idk man") { /*WindowState = WindowState.Fullscreen;*/ }
 
@@ -26,7 +30,41 @@ namespace Newtonian_Particle_Simulator
         private int frames = 0, FPS;
         protected override void OnRenderFrame(FrameEventArgs e)
         {
+            GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
+
+            // Save OpenGL state
+            int lastProgram = GL.GetInteger(GetPName.CurrentProgram);
+            bool depthTest = GL.GetBoolean(GetPName.DepthTest);
+            bool blend = GL.GetBoolean(GetPName.Blend);
+            
+            // Render particles
             particleSimulator.Run((float)e.Time, camera.View, projection, camera.Position);
+            
+            // Update ImGui
+            _imGuiController.Update(this, (float)e.Time);
+
+            // Create ImGui UI
+            ImGui.Begin("Controls");
+            if (ImGui.SliderFloat("Scale Factor", ref _scaleFactor, 0.1f, 10.0f))
+            {
+                particleSimulator.SetScaleFactor(_scaleFactor);
+            }
+            ImGui.Text($"FPS: {FPS}");
+            ImGui.Text($"Mode: {particleSimulator.CurrentMode}");
+            ImGui.Text("Press 'T' to toggle between Flying and Interactive modes");
+            ImGui.Text("Press 'E' to toggle cursor visibility");
+            ImGui.End();
+
+            // Render ImGui
+            _imGuiController.Render();
+
+            // Restore OpenGL state
+            GL.UseProgram(lastProgram);
+            if (depthTest) GL.Enable(EnableCap.DepthTest);
+            else GL.Disable(EnableCap.DepthTest);
+            if (blend) GL.Enable(EnableCap.Blend);
+            else GL.Disable(EnableCap.Blend);
+            
             SwapBuffers();
             frames++;
             base.OnRenderFrame(e);
@@ -47,33 +85,69 @@ namespace Newtonian_Particle_Simulator
                 KeyboardManager.Update();
                 MouseManager.Update();
 
-                if (KeyboardManager.IsKeyTouched(Key.V))
-                    VSync = VSync == VSyncMode.Off ? VSyncMode.On : VSyncMode.Off;
+                // Always process Escape key
+                if (KeyboardManager.IsKeyDown(Key.Escape))
+                    Close();
 
-                if (KeyboardManager.IsKeyTouched(Key.E))
+                // Check if ImGui is using the input
+                var io = ImGui.GetIO();
+                if (!io.WantCaptureMouse && !io.WantCaptureKeyboard)
                 {
-                    CursorVisible = !CursorVisible;
-                    CursorGrabbed = !CursorGrabbed;
+                    if (KeyboardManager.IsKeyTouched(Key.V))
+                        VSync = VSync == VSyncMode.Off ? VSyncMode.On : VSyncMode.Off;
 
-                    if (!CursorVisible)
+                    if (KeyboardManager.IsKeyTouched(Key.E))
                     {
-                        MouseManager.Update();
-                        camera.Velocity = Vector3.Zero;
+                        CursorVisible = !CursorVisible;
+                        CursorGrabbed = !CursorGrabbed;
+
+                        if (!CursorVisible)
+                        {
+                            MouseManager.Update();
+                            camera.Velocity = Vector3.Zero;
+                        }
                     }
+
+                    if (KeyboardManager.IsKeyTouched(Key.F11))
+                        WindowState = WindowState == WindowState.Normal ? WindowState.Fullscreen : WindowState.Normal;
+
+                    particleSimulator.ProcessInputs(this, camera.Position, camera.View, projection);
+                    if (!CursorVisible)
+                        camera.ProcessInputs((float)e.Time);
                 }
-
-                if (KeyboardManager.IsKeyTouched(Key.F11))
-                    WindowState = WindowState == WindowState.Normal ? WindowState.Fullscreen : WindowState.Normal;
-
-                particleSimulator.ProcessInputs(this, camera.Position, camera.View, projection);
-                if (!CursorVisible)
-                    camera.ProcessInputs((float)e.Time);
             }
 
-            if (KeyboardManager.IsKeyDown(Key.Escape))
-                Close();
-
             base.OnUpdateFrame(e);
+        }
+
+        protected override void OnKeyPress(KeyPressEventArgs e)
+        {
+            base.OnKeyPress(e);
+            _imGuiController.PressChar(e.KeyChar);
+        }
+
+        protected override void OnMouseDown(MouseButtonEventArgs e)
+        {
+            base.OnMouseDown(e);
+            // Additional handling if needed
+        }
+
+        protected override void OnMouseUp(MouseButtonEventArgs e)
+        {
+            base.OnMouseUp(e);
+            // Additional handling if needed
+        }
+
+        protected override void OnMouseMove(MouseMoveEventArgs e)
+        {
+            base.OnMouseMove(e);
+            // Additional handling if needed
+        }
+
+        protected override void OnMouseWheel(MouseWheelEventArgs e)
+        {
+            base.OnMouseWheel(e);
+            // Additional handling if needed
         }
 
         private readonly Stopwatch fpsTimer = Stopwatch.StartNew();
@@ -90,6 +164,9 @@ namespace Newtonian_Particle_Simulator
 
             if (!Helper.IsCoreExtensionAvailable("GL_ARB_buffer_storage", 4.4))
                 throw new NotSupportedException("Your system does not support GL_ARB_buffer_storage");
+
+            // Initialize ImGui
+            _imGuiController = new ImGuiController(Width, Height);
 
             VSync = VSyncMode.Off;
 
@@ -171,6 +248,7 @@ namespace Newtonian_Particle_Simulator
             {
                 GL.Viewport(0, 0, Width, Height);
                 projection = Matrix4.CreatePerspectiveFieldOfView(MathHelper.DegreesToRadians(103.0f), (float)Width / Height, 0.1f, 1000f);
+                _imGuiController?.WindowResized(Width, Height);
             }
 
             base.OnResize(e);
@@ -180,6 +258,12 @@ namespace Newtonian_Particle_Simulator
         {
             if (Focused)
                 MouseManager.Update();
+        }
+
+        protected override void OnUnload(EventArgs e)
+        {
+            _imGuiController?.Dispose();
+            base.OnUnload(e);
         }
     }
 }

@@ -14,15 +14,23 @@ namespace Newtonian_Particle_Simulator.Render
         private readonly BufferObject indexBuffer;
         private readonly ShaderProgram shaderProgram;
         private readonly TextureArrayObject particleTextures;
+        private readonly Vector3[] originalPositions;
+        private float currentScaleFactor = 1.0f;
 
         public unsafe ParticleSimulator(Particle[] particles, string[] texturePaths = null)
         {
             NumParticles = particles.Length;
+            originalPositions = new Vector3[NumParticles];
+            for (int i = 0; i < NumParticles; i++)
+            {
+                originalPositions[i] = particles[i].Position;
+            }
 
             shaderProgram = new ShaderProgram(
                 new Shader(ShaderType.VertexShader, File.ReadAllText("res/shaders/particles/vertex.glsl")),
                 new Shader(ShaderType.FragmentShader, File.ReadAllText("res/shaders/particles/fragment.glsl")));
 
+            shaderProgram.Use();
             int textureLocation = GL.GetUniformLocation(shaderProgram.ID, "particleTextures");
             GL.Uniform1(textureLocation, 0); // Texture unit 0
 
@@ -98,6 +106,9 @@ namespace Newtonian_Particle_Simulator.Render
         }
 
         private bool _isRunning;
+        private string _currentMode = "Interactive Mode (Right Click)";
+        public string CurrentMode => _currentMode;
+
         public bool IsRunning
         {
             get
@@ -108,13 +119,22 @@ namespace Newtonian_Particle_Simulator.Render
             set
             {
                 _isRunning = value;
+                _currentMode = value ? "Flying Mode" : "Interactive Mode (Right Click)";
                 shaderProgram.Upload(3, _isRunning ? 1.0f : 0.0f);
             }
         }
         public void Run(float dT, Matrix4 view, Matrix4 projection, Vector3 camPos)
         {
-            GL.ClearColor(1.0f, 1.0f, 1.0f, 1.0f);
-            GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
+            // Save OpenGL state
+            bool depthTest = GL.GetBoolean(GetPName.DepthTest);
+            bool blend = GL.GetBoolean(GetPName.Blend);
+            BlendingFactor blendSrcFactor = (BlendingFactor)GL.GetInteger(GetPName.BlendSrc);
+            BlendingFactor blendDstFactor = (BlendingFactor)GL.GetInteger(GetPName.BlendDst);
+
+            // Set up particle rendering state
+            GL.Enable(EnableCap.DepthTest);
+            GL.Enable(EnableCap.Blend);
+            GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
 
             shaderProgram.Use();
             particleTextures.Use(TextureUnit.Texture0);
@@ -127,15 +147,21 @@ namespace Newtonian_Particle_Simulator.Render
             GL.DrawElements(PrimitiveType.Triangles, NumParticles * 6, DrawElementsType.UnsignedInt, 0);
 
             GL.MemoryBarrier(MemoryBarrierFlags.ShaderStorageBarrierBit);
+
+            // Restore OpenGL state
+            if (!depthTest) GL.Disable(EnableCap.DepthTest);
+            if (!blend) GL.Disable(EnableCap.Blend);
+            else GL.BlendFunc(blendSrcFactor, blendDstFactor);
         }
 
         public void ProcessInputs(GameWindow gameWindow, in Vector3 camPos, in Matrix4 view, in Matrix4 projection)
         {
             if (gameWindow.CursorVisible)
             {
-                if (MouseManager.LeftButton == ButtonState.Pressed)
+                if (MouseManager.RightButton == ButtonState.Pressed)
                 {
-                    System.Drawing.Point windowSpaceCoords = gameWindow.PointToClient(new System.Drawing.Point(MouseManager.WindowPositionX, MouseManager.WindowPositionY)); windowSpaceCoords.Y = gameWindow.Height - windowSpaceCoords.Y; // [0, Width][0, Height]
+                    System.Drawing.Point windowSpaceCoords = gameWindow.PointToClient(new System.Drawing.Point(MouseManager.WindowPositionX, MouseManager.WindowPositionY));
+                    windowSpaceCoords.Y = gameWindow.Height - windowSpaceCoords.Y; // [0, Width][0, Height]
                     Vector2 normalizedDeviceCoords = Vector2.Divide(new Vector2(windowSpaceCoords.X, windowSpaceCoords.Y), new Vector2(gameWindow.Width, gameWindow.Height)) * 2.0f - new Vector2(1.0f); // [-1.0, 1.0][-1.0, 1.0]
                     Vector3 dir = GetWorldSpaceRay(projection.Inverted(), view.Inverted(), normalizedDeviceCoords);
 
@@ -171,6 +197,24 @@ namespace Newtonian_Particle_Simulator.Render
         {
             shaderProgram.Use();
             shaderProgram.Upload("particleSize", size);
+        }
+
+        public unsafe void SetScaleFactor(float newScaleFactor)
+        {
+            currentScaleFactor = newScaleFactor;
+            
+            Particle[] particles = new Particle[NumParticles];
+            for (int i = 0; i < NumParticles; i++)
+            {
+                particles[i].Position = originalPositions[i] * newScaleFactor;
+                particles[i].Velocity = Vector3.Zero;
+            }
+
+            fixed (void* ptr = &particles[0])
+            {
+                GL.BindBuffer(BufferTarget.ShaderStorageBuffer, particleBuffer.ID);
+                GL.BufferSubData(BufferTarget.ShaderStorageBuffer, IntPtr.Zero, sizeof(Particle) * NumParticles, (IntPtr)ptr);
+            }
         }
     }
 }
