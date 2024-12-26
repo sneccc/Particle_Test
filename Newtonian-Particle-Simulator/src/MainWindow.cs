@@ -20,6 +20,7 @@ namespace Newtonian_Particle_Simulator
     {
         private ImGuiController _imGuiController;
         private float _scaleFactor = 1.0f;
+        private float _particleSize = 0.7f;
 
         public MainWindow() 
             : base(832, 832, new GraphicsMode(0, 0, 0, 0), "idk man") { /*WindowState = WindowState.Fullscreen;*/ }
@@ -45,10 +46,23 @@ namespace Newtonian_Particle_Simulator
 
             // Create ImGui UI
             ImGui.Begin("Controls");
-            if (ImGui.SliderFloat("Scale Factor", ref _scaleFactor, 0.1f, 10.0f))
+            
+            // Logarithmic scale factor slider
+            float logScale = (float)Math.Log(_scaleFactor, 2); // Convert to log scale
+            if (ImGui.SliderFloat("Scale Factor (log2)", ref logScale, -2f, 2f))
             {
+                float newScale = (float)Math.Pow(2, logScale); // Convert back from log scale
+                _scaleFactor = newScale;
                 particleSimulator.SetScaleFactor(_scaleFactor);
             }
+            ImGui.Text($"Actual scale: {_scaleFactor:F3}x"); // Show actual scale value
+            
+            // Particle size slider
+            if (ImGui.SliderFloat("Particle Size", ref _particleSize, 0.1f, 2.0f))
+            {
+                particleSimulator.SetParticleSize(_particleSize);
+            }
+
             ImGui.Text($"FPS: {FPS}");
             ImGui.Text($"Mode: {particleSimulator.CurrentMode}");
             ImGui.Text("Press 'T' to toggle between Flying and Interactive modes");

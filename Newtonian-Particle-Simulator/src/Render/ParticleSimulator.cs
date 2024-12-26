@@ -33,6 +33,7 @@ namespace Newtonian_Particle_Simulator.Render
             shaderProgram.Use();
             int textureLocation = GL.GetUniformLocation(shaderProgram.ID, "particleTextures");
             GL.Uniform1(textureLocation, 0); // Texture unit 0
+            shaderProgram.Upload(8, 1.0f);  // Initialize dynamic scale to 1.0
 
             particleBuffer = new BufferObject(BufferRangeTarget.ShaderStorageBuffer, 0);
             particleBuffer.ImmutableAllocate(sizeof(Particle) * (nint)NumParticles, particles[0], BufferStorageFlags.None);
@@ -139,9 +140,11 @@ namespace Newtonian_Particle_Simulator.Render
             shaderProgram.Use();
             particleTextures.Use(TextureUnit.Texture0);
 
+            // Update uniforms
             shaderProgram.Upload(0, dT);
             shaderProgram.Upload(4, view * projection);
             shaderProgram.Upload(6, camPos);
+            shaderProgram.Upload(8, currentScaleFactor);  // Ensure scale factor is set every frame
 
             GL.BindBuffer(BufferTarget.ElementArrayBuffer, indexBuffer.ID);
             GL.DrawElements(PrimitiveType.Triangles, NumParticles * 6, DrawElementsType.UnsignedInt, 0);
@@ -202,19 +205,8 @@ namespace Newtonian_Particle_Simulator.Render
         public unsafe void SetScaleFactor(float newScaleFactor)
         {
             currentScaleFactor = newScaleFactor;
-            
-            Particle[] particles = new Particle[NumParticles];
-            for (int i = 0; i < NumParticles; i++)
-            {
-                particles[i].Position = originalPositions[i] * newScaleFactor;
-                particles[i].Velocity = Vector3.Zero;
-            }
-
-            fixed (void* ptr = &particles[0])
-            {
-                GL.BindBuffer(BufferTarget.ShaderStorageBuffer, particleBuffer.ID);
-                GL.BufferSubData(BufferTarget.ShaderStorageBuffer, IntPtr.Zero, sizeof(Particle) * NumParticles, (IntPtr)ptr);
-            }
+            shaderProgram.Use();
+            shaderProgram.Upload(8, newScaleFactor);  // Update dynamic scale uniform
         }
     }
 }

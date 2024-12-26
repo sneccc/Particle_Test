@@ -30,6 +30,7 @@ layout(location = 4) uniform mat4 projViewMatrix;
 layout(location = 5) uniform float particleSize;
 layout(location = 6) uniform vec3 cameraPos;
 layout(location = 7) uniform int numTextures;
+layout(location = 8) uniform float dynamicScale;
 
 out InOutVars
 {
@@ -94,11 +95,14 @@ void main()
     // Get particle data
     PackedVector3 packedPosition = particleSSBO.Particles[particleIndex].Position;
     PackedVector3 packedVelocity = particleSSBO.Particles[particleIndex].Velocity;
-    vec3 position = PackedVec3ToVec3(packedPosition);
+    vec3 position = PackedVec3ToVec3(packedPosition) * dynamicScale;  // Scale the position
     vec3 velocity = PackedVec3ToVec3(packedVelocity);
-
+    
+    // Scale the point of mass and interaction distance to match the scaled coordinate system
+    vec3 scaledPointOfMass = pointOfMass * dynamicScale;
+    vec3 toMass = scaledPointOfMass - position;
+    
     // Physics calculations
-    vec3 toMass = pointOfMass - position;
     float m1 = 1.0;
     float m2 = 176.0;
     float G  = 1.0;
@@ -111,7 +115,8 @@ void main()
     position += (dT * velocity + 0.5 * acceleration * dT * dT) * isRunning;
     velocity += acceleration * dT;
 
-    particleSSBO.Particles[particleIndex].Position = Vec3ToPackedVec3(position);
+    // Store unscaled position back
+    particleSSBO.Particles[particleIndex].Position = Vec3ToPackedVec3(position / dynamicScale);
     particleSSBO.Particles[particleIndex].Velocity = Vec3ToPackedVec3(velocity);
 
     // Corrected Billboard calculation
@@ -120,6 +125,7 @@ void main()
     vec3 right = normalize(cross(worldUp, toCamera));
     vec3 up = cross(toCamera, right);
     
+    // Note: We don't scale the particle size with dynamicScale anymore
     vec3 finalPosition = position + (right * corner.x + up * corner.y) * particleSize;
 
     // Use neutral white color to preserve original image colors
