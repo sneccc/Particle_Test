@@ -31,6 +31,7 @@ layout(location = 5) uniform float particleSize;
 layout(location = 6) uniform vec3 cameraPos;
 layout(location = 7) uniform int numTextures;
 layout(location = 8) uniform float dynamicScale;
+uniform vec3 axisScales;
 
 out InOutVars
 {
@@ -95,11 +96,15 @@ void main()
     // Get particle data
     PackedVector3 packedPosition = particleSSBO.Particles[particleIndex].Position;
     PackedVector3 packedVelocity = particleSSBO.Particles[particleIndex].Velocity;
-    vec3 position = PackedVec3ToVec3(packedPosition) * dynamicScale;  // Scale the position
+    vec3 basePosition = PackedVec3ToVec3(packedPosition);
+    
+    // Apply both dynamic scale and axis scales with safety minimum
+    vec3 safeAxisScales = max(axisScales, vec3(0.0001)); // Prevent division by zero
+    vec3 position = basePosition * dynamicScale * safeAxisScales;
     vec3 velocity = PackedVec3ToVec3(packedVelocity);
     
     // Scale the point of mass and interaction distance to match the scaled coordinate system
-    vec3 scaledPointOfMass = pointOfMass * dynamicScale;
+    vec3 scaledPointOfMass = pointOfMass * dynamicScale * safeAxisScales;
     vec3 toMass = scaledPointOfMass - position;
     
     // Physics calculations
@@ -115,18 +120,25 @@ void main()
     position += (dT * velocity + 0.5 * acceleration * dT * dT) * isRunning;
     velocity += acceleration * dT;
 
-    // Store unscaled position back
-    particleSSBO.Particles[particleIndex].Position = Vec3ToPackedVec3(position / dynamicScale);
+    // Store unscaled position back (remove both dynamic scale and axis scales)
+    particleSSBO.Particles[particleIndex].Position = Vec3ToPackedVec3(position / (dynamicScale * safeAxisScales));
     particleSSBO.Particles[particleIndex].Velocity = Vec3ToPackedVec3(velocity);
 
-    // Corrected Billboard calculation
+    // Billboard calculation
     vec3 toCamera = normalize(cameraPos - position);
     vec3 worldUp = vec3(0.0, 1.0, 0.0);
     vec3 right = normalize(cross(worldUp, toCamera));
     vec3 up = cross(toCamera, right);
     
-    // Note: We don't scale the particle size with dynamicScale anymore
-    vec3 finalPosition = position + (right * corner.x + up * corner.y) * particleSize;
+    // Calculate effective size - use average of non-zero scales to maintain visibility
+    float avgScale = (
+        (safeAxisScales.x > 0.01 ? safeAxisScales.x : 1.0) + 
+        (safeAxisScales.y > 0.01 ? safeAxisScales.y : 1.0) + 
+        (safeAxisScales.z > 0.01 ? safeAxisScales.z : 1.0)
+    ) / 3.0;
+    float effectiveSize = particleSize * max(avgScale, 0.3); // Never go below 30% size
+    
+    vec3 finalPosition = position + (right * corner.x + up * corner.y) * effectiveSize;
 
     // Use neutral white color to preserve original image colors
     outData.Color = vec3(1.0);

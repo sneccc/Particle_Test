@@ -21,6 +21,7 @@ namespace Newtonian_Particle_Simulator
         private ImGuiController _imGuiController;
         private float _scaleFactor = 1.0f;
         private float _particleSize = 0.7f;
+        private Vector3 _axisScales = new Vector3(1.0f); // 100% for all axes by default
 
         public MainWindow() 
             : base(832, 832, new GraphicsMode(0, 0, 0, 0), "idk man") { /*WindowState = WindowState.Fullscreen;*/ }
@@ -61,6 +62,37 @@ namespace Newtonian_Particle_Simulator
             if (ImGui.SliderFloat("Particle Size", ref _particleSize, 0.1f, 2.0f))
             {
                 particleSimulator.SetParticleSize(_particleSize);
+            }
+
+            // Axis scale sliders (0% to 100%)
+            ImGui.Separator();
+            ImGui.Text("Axis Scales");
+            bool axisScaleChanged = false;
+            
+            float xScale = _axisScales.X * 100f; // Convert to percentage
+            if (ImGui.SliderFloat("X Axis", ref xScale, 0f, 100f, "%.0f%%"))
+            {
+                _axisScales.X = xScale / 100f;
+                axisScaleChanged = true;
+            }
+            
+            float yScale = _axisScales.Y * 100f;
+            if (ImGui.SliderFloat("Y Axis", ref yScale, 0f, 100f, "%.0f%%"))
+            {
+                _axisScales.Y = yScale / 100f;
+                axisScaleChanged = true;
+            }
+            
+            float zScale = _axisScales.Z * 100f;
+            if (ImGui.SliderFloat("Z Axis", ref zScale, 0f, 100f, "%.0f%%"))
+            {
+                _axisScales.Z = zScale / 100f;
+                axisScaleChanged = true;
+            }
+
+            if (axisScaleChanged)
+            {
+                particleSimulator.SetAxisScales(_axisScales);
             }
 
             ImGui.Text($"FPS: {FPS}");

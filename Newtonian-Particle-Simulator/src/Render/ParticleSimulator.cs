@@ -16,6 +16,7 @@ namespace Newtonian_Particle_Simulator.Render
         private readonly TextureArrayObject particleTextures;
         private readonly Vector3[] originalPositions;
         private float currentScaleFactor = 1.0f;
+        private Vector3 currentAxisScales = new Vector3(1.0f);
 
         public unsafe ParticleSimulator(Particle[] particles, string[] texturePaths = null)
         {
@@ -34,6 +35,7 @@ namespace Newtonian_Particle_Simulator.Render
             int textureLocation = GL.GetUniformLocation(shaderProgram.ID, "particleTextures");
             GL.Uniform1(textureLocation, 0); // Texture unit 0
             shaderProgram.Upload(8, 1.0f);  // Initialize dynamic scale to 1.0
+            shaderProgram.Upload("axisScales", currentAxisScales);  // Initialize axis scales to 100%
 
             particleBuffer = new BufferObject(BufferRangeTarget.ShaderStorageBuffer, 0);
             particleBuffer.ImmutableAllocate(sizeof(Particle) * (nint)NumParticles, particles[0], BufferStorageFlags.None);
@@ -207,6 +209,13 @@ namespace Newtonian_Particle_Simulator.Render
             currentScaleFactor = newScaleFactor;
             shaderProgram.Use();
             shaderProgram.Upload(8, newScaleFactor);  // Update dynamic scale uniform
+        }
+
+        public unsafe void SetAxisScales(Vector3 scales)
+        {
+            currentAxisScales = scales;
+            shaderProgram.Use();
+            shaderProgram.Upload("axisScales", scales);
         }
     }
 }
