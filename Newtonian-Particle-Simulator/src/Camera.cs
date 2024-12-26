@@ -57,7 +57,12 @@ namespace Newtonian_Particle_Simulator
             if (KeyboardManager.IsKeyDown(Key.A))
                 acceleration -= Vector3.Cross(ViewDir, Up).Normalized();
 
-            
+            if (KeyboardManager.IsKeyDown(Key.E))
+                acceleration += Up;
+
+            if (KeyboardManager.IsKeyDown(Key.Q))
+                acceleration -= Up;
+
             Velocity += KeyboardManager.IsKeyDown(Key.LShift) ? acceleration * 5 : (KeyboardManager.IsKeyDown(Key.LControl) ? acceleration * 0.35f : acceleration);
             if (Vector3.Dot(Velocity, Velocity) < 0.01f)
                 Velocity = Vector3.Zero;

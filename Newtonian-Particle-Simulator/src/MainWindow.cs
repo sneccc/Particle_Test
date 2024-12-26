@@ -98,7 +98,7 @@ namespace Newtonian_Particle_Simulator
             ImGui.Text($"FPS: {FPS}");
             ImGui.Text($"Mode: {particleSimulator.CurrentMode}");
             ImGui.Text("Press 'T' to toggle between Flying and Interactive modes");
-            ImGui.Text("Press 'E' to toggle cursor visibility");
+            ImGui.Text("Press 'Y' to toggle cursor visibility");
             ImGui.End();
 
             // Render ImGui
@@ -142,7 +142,7 @@ namespace Newtonian_Particle_Simulator
                     if (KeyboardManager.IsKeyTouched(Key.V))
                         VSync = VSync == VSyncMode.Off ? VSyncMode.On : VSyncMode.Off;
 
-                    if (KeyboardManager.IsKeyTouched(Key.E))
+                    if (KeyboardManager.IsKeyTouched(Key.Y))
                     {
                         CursorVisible = !CursorVisible;
                         CursorGrabbed = !CursorGrabbed;
