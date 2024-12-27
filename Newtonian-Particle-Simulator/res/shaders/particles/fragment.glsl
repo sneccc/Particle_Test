@@ -8,6 +8,7 @@ in InOutVars
     vec2 TexCoord;
     vec3 Color;
     float TextureLayer;
+    bool IsSelected;
 } inData;
 
 void main()
@@ -18,12 +19,19 @@ void main()
     if(texColor.a < 0.1)
         discard;
     
-    // Preserve more of the original image color, just add a slight warm tint
-    //vec3 warmTint = vec3(1.0, 0.95, 0.9);
     vec3 finalColor = texColor.rgb * inData.Color;
     
-    // Optional: Add a bit of gamma correction to brighten mid-tones
-    finalColor = pow(finalColor, vec3(1.0));
+    // Make selection effect more obvious
+    if(inData.IsSelected) {
+        finalColor = vec3(1.0, 0.0, 0.0);  // Pure red
+        texColor.a = 1.0;  // Full opacity
+    }
+    
+    // Add glow effect for selected particles
+    if(inData.IsSelected) {
+        float glowStrength = 1.5;  // Increase brightness for selected particles
+        finalColor *= glowStrength;
+    }
     
     FragColor = vec4(finalColor, texColor.a);
 }

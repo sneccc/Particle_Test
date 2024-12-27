@@ -17,6 +17,9 @@ namespace Newtonian_Particle_Simulator.Render
         private readonly Vector3[] originalPositions;
         private float currentScaleFactor = 1.0f;
         private Vector3 currentAxisScales = new Vector3(1.0f);
+        private int selectedParticleIndex = -1;
+        private bool isFilteredMode = false;
+        private const float NEIGHBOR_DISTANCE_THRESHOLD = 5.0f; // Adjust this value to control how close particles need to be
 
         public unsafe ParticleSimulator(Particle[] particles, string[] texturePaths = null)
         {
@@ -166,8 +169,8 @@ namespace Newtonian_Particle_Simulator.Render
                 if (MouseManager.RightButton == ButtonState.Pressed)
                 {
                     System.Drawing.Point windowSpaceCoords = gameWindow.PointToClient(new System.Drawing.Point(MouseManager.WindowPositionX, MouseManager.WindowPositionY));
-                    windowSpaceCoords.Y = gameWindow.Height - windowSpaceCoords.Y; // [0, Width][0, Height]
-                    Vector2 normalizedDeviceCoords = Vector2.Divide(new Vector2(windowSpaceCoords.X, windowSpaceCoords.Y), new Vector2(gameWindow.Width, gameWindow.Height)) * 2.0f - new Vector2(1.0f); // [-1.0, 1.0][-1.0, 1.0]
+                    windowSpaceCoords.Y = gameWindow.Height - windowSpaceCoords.Y;
+                    Vector2 normalizedDeviceCoords = Vector2.Divide(new Vector2(windowSpaceCoords.X, windowSpaceCoords.Y), new Vector2(gameWindow.Width, gameWindow.Height)) * 2.0f - new Vector2(1.0f);
                     Vector3 dir = GetWorldSpaceRay(projection.Inverted(), view.Inverted(), normalizedDeviceCoords);
 
                     Vector3 pointOfMass = camPos + dir * 25.0f;
@@ -177,9 +180,33 @@ namespace Newtonian_Particle_Simulator.Render
                 else
                     shaderProgram.Upload(2, 0.0f);
             }
+            else
+            {
+                // Handle left click in fly mode
+                if (MouseManager.IsButtonTouched(MouseButton.Left) && selectedParticleIndex != -1)
+                {
+                    isFilteredMode = !isFilteredMode;
+                    if (isFilteredMode)
+                    {
+                        // Upload the selected particle's position for distance calculations
+                        Vector3 selectedPos = originalPositions[selectedParticleIndex] * currentScaleFactor * currentAxisScales;
+                        shaderProgram.Upload("selectedParticlePos", selectedPos);
+                    }
+                    shaderProgram.Upload("isFilteredMode", isFilteredMode);
+                    shaderProgram.Upload("neighborThreshold", NEIGHBOR_DISTANCE_THRESHOLD);
+                }
+            }
 
             if (KeyboardManager.IsKeyTouched(Key.T))
+            {
                 IsRunning = !IsRunning;
+                // Reset filtered mode when switching modes
+                if (isFilteredMode)
+                {
+                    isFilteredMode = false;
+                    shaderProgram.Upload("isFilteredMode", false);
+                }
+            }
 
             shaderProgram.Upload(4, view * projection);
         }
@@ -216,6 +243,49 @@ namespace Newtonian_Particle_Simulator.Render
             currentAxisScales = scales;
             shaderProgram.Use();
             shaderProgram.Upload("axisScales", scales);
+        }
+
+        public void UpdateSelection(Vector3 cameraPos, Vector3 viewDir)
+        {
+            float closestDistance = float.MaxValue;
+            int closestParticle = -1;
+            float selectionThreshold = 0.5f;  // Increased threshold
+            float maxDistance = 50.0f;  // Maximum distance to consider particles
+            
+            // Use viewDir directly as our ray direction since it's already normalized
+            Vector3 rayDir = viewDir;
+            
+            for (int i = 0; i < NumParticles; i++)
+            {
+                Vector3 particlePos = originalPositions[i] * currentScaleFactor * currentAxisScales;
+                Vector3 toParticle = particlePos - cameraPos;
+                
+                // Project particle onto ray
+                float dot = Vector3.Dot(toParticle, rayDir);
+                if (dot <= 0 || dot > maxDistance) continue; // Behind camera or too far
+                
+                Vector3 projection = rayDir * dot;
+                Vector3 toRay = toParticle - projection;
+                float distanceToRay = toRay.Length;
+                
+                if (distanceToRay < selectionThreshold && dot < closestDistance)
+                {
+                    closestDistance = dot;
+                    closestParticle = i;
+                }
+            }
+
+            // Only update selection if we found a valid particle or if we had a valid selection before
+            if (closestParticle != -1 || selectedParticleIndex != -1)
+            {
+                if (selectedParticleIndex != closestParticle)
+                {
+                    //Console.WriteLine($"Selection changed: {selectedParticleIndex} -> {closestParticle} (distance: {(closestParticle != -1 ? closestDistance : 0):F3})");
+                    selectedParticleIndex = closestParticle;
+                    shaderProgram.Use();
+                    shaderProgram.Upload(9, selectedParticleIndex);
+                }
+            }
         }
     }
 }

@@ -31,13 +31,18 @@ layout(location = 5) uniform float particleSize;
 layout(location = 6) uniform vec3 cameraPos;
 layout(location = 7) uniform int numTextures;
 layout(location = 8) uniform float dynamicScale;
+layout(location = 9) uniform int selectedParticleIndex;
 uniform vec3 axisScales;
+uniform bool isFilteredMode;
+uniform float neighborThreshold;
+uniform vec3 selectedParticlePos;
 
 out InOutVars
 {
     vec2 TexCoord;
     vec3 Color;
     float TextureLayer;
+    bool IsSelected;
 } outData;
 
 vec3 PackedVec3ToVec3(PackedVector3 vec);
@@ -64,8 +69,13 @@ void getAtlasUV(int textureIndex, out vec2 uvMin, out vec2 uvMax, out float laye
 void main()
 {
     // Calculate which particle and which vertex of the quad we're processing
-    int particleIndex = gl_VertexID >> 2;
-    int cornerIndex = gl_VertexID & 3;
+    int vertexID = gl_VertexID;
+    int particleIndex = vertexID / 4;  // Each particle has 4 vertices
+    int cornerIndex = vertexID % 4;    // Which corner of the quad
+    
+    // Set selection state and debug color
+    outData.IsSelected = (selectedParticleIndex >= 0) && (particleIndex == selectedParticleIndex);
+    outData.Color = outData.IsSelected ? vec3(1.0, 0.0, 0.0) : vec3(1, 1, 1);  // Red if selected
     
     // Quad corners
     vec2 corners[4] = vec2[4](
@@ -140,8 +150,19 @@ void main()
     
     vec3 finalPosition = position + (right * corner.x + up * corner.y) * effectiveSize;
 
-    // Use neutral white color to preserve original image colors
-    outData.Color = vec3(1.0);
+    // Handle filtered mode - hide particles that are too far from selected particle
+    if (isFilteredMode && !outData.IsSelected)
+    {
+        float distance = length(position - selectedParticlePos);
+        if (distance > neighborThreshold)
+        {
+            gl_Position = vec4(0.0); // Move particle off-screen
+            return;
+        }
+        // Fade color based on distance
+        float distanceFactor = 1.0 - (distance / neighborThreshold);
+        outData.Color *= distanceFactor;
+    }
 
     gl_Position = projViewMatrix * vec4(finalPosition, 1.0);
 }

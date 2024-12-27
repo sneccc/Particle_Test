@@ -46,6 +46,12 @@ namespace Newtonian_Particle_Simulator
             // Render particles
             particleSimulator.Run((float)e.Time, camera.View, projection, camera.Position);
             
+            // Update particle selection in fly mode
+            if (!CursorVisible)
+            {
+                particleSimulator.UpdateSelection(camera.Position, camera.ViewDir);
+            }
+            
             // Draw crosshair in fly mode
             if (!CursorVisible)
             {

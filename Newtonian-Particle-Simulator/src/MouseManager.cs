@@ -1,49 +1,41 @@
-﻿using OpenTK;
-using OpenTK.Input;
+﻿using OpenTK.Input;
+using OpenTK;
 
 namespace Newtonian_Particle_Simulator
 {
-    public static class MouseManager
+    static class MouseManager
     {
         private static MouseState lastMouseState;
         private static MouseState thisMouseState;
-        private static MouseState thisMouseCursorState;
+
+        public static int WindowPositionX => thisMouseState.X;
+        public static int WindowPositionY => thisMouseState.Y;
+
+        public static ButtonState LeftButton => thisMouseState.LeftButton;
+        public static ButtonState RightButton => thisMouseState.RightButton;
+
+        public static Vector2 DeltaPosition => new Vector2(thisMouseState.X - lastMouseState.X, thisMouseState.Y - lastMouseState.Y);
+
         public static void Update()
         {
             lastMouseState = thisMouseState;
             thisMouseState = Mouse.GetState();
-            thisMouseCursorState = Mouse.GetCursorState();
         }
 
-
-        public static int WindowPositionX => thisMouseCursorState.X;
-        public static int WindowPositionY => thisMouseCursorState.Y;
-        public static int PositionX => thisMouseState.X;
-        public static int PositionY => thisMouseState.Y;
-        public static Vector2 DeltaPosition => new Vector2(thisMouseState.X - lastMouseState.X, thisMouseState.Y - lastMouseState.Y);
-        public static float DeltaScrollX => thisMouseState.Scroll.X - lastMouseState.Scroll.X;
-        public static float DeltaScrollY => thisMouseState.Scroll.Y - lastMouseState.Scroll.Y;
-
-        public static ButtonState LeftButton => thisMouseState.LeftButton;
-        public static ButtonState RightButton => thisMouseState.RightButton;
-        public static ButtonState MiddleButton => thisMouseState.MiddleButton;
-
         /// <summary>
-        /// 
+        /// Returns true only on the first frame the button is pressed
         /// </summary>
-        /// <returns>True if mouseButton is down this update but not last one</returns>
-        public static bool IsButtonTouched(MouseButton mouseButton) => thisMouseState.IsButtonDown(mouseButton) && lastMouseState.IsButtonUp(mouseButton);
-
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <returns>True if mouseButton is down</returns>
-        public static bool IsButtonDown(MouseButton mouseButton) => thisMouseState.IsButtonDown(mouseButton);
-
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <returns>True if mouseButton is up this update but not last one</returns>
-        public static bool IsButtonUp(MouseButton mouseButton) => thisMouseState.IsButtonUp(mouseButton) && lastMouseState.IsButtonDown(mouseButton);
+        public static bool IsButtonTouched(MouseButton button)
+        {
+            switch (button)
+            {
+                case MouseButton.Left:
+                    return thisMouseState.LeftButton == ButtonState.Pressed && lastMouseState.LeftButton == ButtonState.Released;
+                case MouseButton.Right:
+                    return thisMouseState.RightButton == ButtonState.Pressed && lastMouseState.RightButton == ButtonState.Released;
+                default:
+                    return false;
+            }
+        }
     }
 }
