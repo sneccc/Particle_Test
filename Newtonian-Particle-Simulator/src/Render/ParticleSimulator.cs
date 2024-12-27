@@ -122,7 +122,7 @@ namespace Newtonian_Particle_Simulator.Render
             set
             {
                 _isRunning = value;
-                _currentMode = value ? "Flying Mode" : "Interactive Mode (Right Click)";
+                _currentMode = value ? "Interactive Mode (Right Click)":"Flying Mode";
                 shaderProgram.Upload(3, _isRunning ? 1.0f : 0.0f);
             }
         }

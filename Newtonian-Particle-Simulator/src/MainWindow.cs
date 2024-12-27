@@ -5,6 +5,7 @@ using OpenTK.Input;
 using OpenTK.Graphics;
 using OpenTK.Graphics.OpenGL4;
 using Newtonian_Particle_Simulator.Render;
+using Newtonian_Particle_Simulator.Render.Objects;
 using System.IO;
 using ImGuiNET;
 
@@ -21,7 +22,9 @@ namespace Newtonian_Particle_Simulator
         private ImGuiController _imGuiController;
         private float _scaleFactor = 1.0f;
         private float _particleSize = 0.7f;
-        private Vector3 _axisScales = new Vector3(1.0f); // 100% for all axes by default
+        private Vector3 _axisScales = new Vector3(1.0f);
+        private float _backgroundColor = 0.0f;
+        private Crosshair _crosshair;
 
         public MainWindow() 
             : base(832, 832, new GraphicsMode(0, 0, 0, 0), "idk man") { /*WindowState = WindowState.Fullscreen;*/ }
@@ -30,6 +33,7 @@ namespace Newtonian_Particle_Simulator
         private Matrix4 projection;
 
         private int frames = 0, FPS;
+
         protected override void OnRenderFrame(FrameEventArgs e)
         {
             GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
@@ -42,12 +46,27 @@ namespace Newtonian_Particle_Simulator
             // Render particles
             particleSimulator.Run((float)e.Time, camera.View, projection, camera.Position);
             
+            // Draw crosshair in fly mode
+            if (!CursorVisible)
+            {
+                _crosshair.Draw();
+            }
+
             // Update ImGui
             _imGuiController.Update(this, (float)e.Time);
 
             // Create ImGui UI
             ImGui.Begin("Controls");
             
+            // Background color control
+            ImGui.Separator();
+            ImGui.Text("Background");
+            if (ImGui.SliderFloat("Brightness", ref _backgroundColor, 0.0f, 1.0f, "%.2f"))
+            {
+                GL.ClearColor(_backgroundColor, _backgroundColor, _backgroundColor, 1.0f);
+            }
+
+            ImGui.Separator();
             // Logarithmic scale factor slider
             float logScale = (float)Math.Log(_scaleFactor, 2); // Convert to log scale
             if (ImGui.SliderFloat("Scale Factor (log2)", ref logScale, -2f, 2f))
@@ -98,7 +117,6 @@ namespace Newtonian_Particle_Simulator
             ImGui.Text($"FPS: {FPS}");
             ImGui.Text($"Mode: {particleSimulator.CurrentMode}");
             ImGui.Text("Press 'T' to toggle between Flying and Interactive modes");
-            ImGui.Text("Press 'Y' to toggle cursor visibility");
             ImGui.End();
 
             // Render ImGui
@@ -135,17 +153,22 @@ namespace Newtonian_Particle_Simulator
                 if (KeyboardManager.IsKeyDown(Key.Escape))
                     Close();
 
-                // Check if ImGui is using the input
-                var io = ImGui.GetIO();
-                if (!io.WantCaptureMouse && !io.WantCaptureKeyboard)
+                // Only check ImGui input capture when cursor is visible
+                bool canProcessInput = CursorVisible ? 
+                    !ImGui.GetIO().WantCaptureMouse && !ImGui.GetIO().WantCaptureKeyboard : 
+                    true;
+
+                if (canProcessInput)
                 {
                     if (KeyboardManager.IsKeyTouched(Key.V))
                         VSync = VSync == VSyncMode.Off ? VSyncMode.On : VSyncMode.Off;
 
-                    if (KeyboardManager.IsKeyTouched(Key.Y))
+                    if (KeyboardManager.IsKeyTouched(Key.T))
                     {
+                        // Toggle both mode and cursor state
                         CursorVisible = !CursorVisible;
-                        CursorGrabbed = !CursorGrabbed;
+                        CursorGrabbed = !CursorVisible;  // Grab cursor when invisible
+                        particleSimulator.IsRunning = !CursorVisible;  // Flying mode when cursor is hidden
 
                         if (!CursorVisible)
                         {
@@ -214,7 +237,14 @@ namespace Newtonian_Particle_Simulator
             // Initialize ImGui
             _imGuiController = new ImGuiController(Width, Height);
 
+            // Initialize crosshair
+            _crosshair = new Crosshair(0.01f);
+            _crosshair.UpdateAspectRatio(Width, Height);  // Set initial aspect ratio
+
             VSync = VSyncMode.Off;
+
+            // Set initial background color to black
+            GL.ClearColor(_backgroundColor, _backgroundColor, _backgroundColor, 1.0f);
 
             int numParticles;
             PositionLoadingMode loadingMode;
@@ -284,7 +314,6 @@ namespace Newtonian_Particle_Simulator
             }
 
             GC.Collect();
-            GL.ClearColor(1.0f, 1.0f, 1.0f, 1.0f); // White background
             base.OnLoad(e);
         }
 
@@ -295,6 +324,7 @@ namespace Newtonian_Particle_Simulator
                 GL.Viewport(0, 0, Width, Height);
                 projection = Matrix4.CreatePerspectiveFieldOfView(MathHelper.DegreesToRadians(103.0f), (float)Width / Height, 0.1f, 1000f);
                 _imGuiController?.WindowResized(Width, Height);
+                _crosshair?.UpdateAspectRatio(Width, Height);
             }
 
             base.OnResize(e);
@@ -308,6 +338,7 @@ namespace Newtonian_Particle_Simulator
 
         protected override void OnUnload(EventArgs e)
         {
+            _crosshair?.Dispose();
             _imGuiController?.Dispose();
             base.OnUnload(e);
         }
