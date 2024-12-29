@@ -25,6 +25,7 @@ namespace Newtonian_Particle_Simulator
         private Vector3 _axisScales = new Vector3(1.0f);
         private float _backgroundColor = 0.0f;
         private Crosshair _crosshair;
+        private Skybox _skybox;
 
         public MainWindow() 
             : base(832, 832, new GraphicsMode(0, 0, 0, 0), "idk man") { /*WindowState = WindowState.Fullscreen;*/ }
@@ -42,6 +43,9 @@ namespace Newtonian_Particle_Simulator
             int lastProgram = GL.GetInteger(GetPName.CurrentProgram);
             bool depthTest = GL.GetBoolean(GetPName.DepthTest);
             bool blend = GL.GetBoolean(GetPName.Blend);
+            
+            // Draw skybox first
+            _skybox?.Draw(camera.View, projection);
             
             // Render particles
             particleSimulator.Run((float)e.Time, camera.View, projection, camera.Position);
@@ -247,77 +251,49 @@ namespace Newtonian_Particle_Simulator
             _crosshair = new Crosshair(0.01f);
             _crosshair.UpdateAspectRatio(Width, Height);  // Set initial aspect ratio
 
+            // Load skybox
+            try
+            {
+                string skyboxPath = "res/textures/sky/space.jpg";
+                _skybox = new Skybox(skyboxPath);
+                Console.WriteLine("Skybox background loaded successfully");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to load skybox background: {ex.Message}");
+                Console.WriteLine($"Stack trace: {ex.StackTrace}");
+            }
+
             VSync = VSyncMode.Off;
 
             // Set initial background color to black
             GL.ClearColor(_backgroundColor, _backgroundColor, _backgroundColor, 1.0f);
 
             int numParticles;
-            PositionLoadingMode loadingMode;
-            string folderPath = "";
+            string folderPath = @"C:\Users\Daniel\CodingProjects\aesthetica\data\datasets\normalized_NatGeoPhoto_000";
 
-            Console.WriteLine("Select position loading mode:");
-            Console.WriteLine("0 - Random positions");
-            Console.WriteLine("1 - Load from embeddings folder");
+            if (!Directory.Exists(folderPath) || 
+                !File.Exists(Path.Combine(folderPath, "image_embeddings.npy")) || 
+                !File.Exists(Path.Combine(folderPath, "file_paths.npy")))
+            {
+                throw new DirectoryNotFoundException($"Invalid folder path or missing required files: {folderPath}");
+            }
+
+            // Hardcode to load all images (maxImages = 0)
+            int maxImages = 0;
             
-            while (!Enum.TryParse(Console.ReadLine(), out loadingMode) || !Enum.IsDefined(typeof(PositionLoadingMode), loadingMode))
+            var embeddingData = EmbeddingLoader.LoadFromFolder(folderPath, maxEntries: maxImages);
+            numParticles = embeddingData.Positions.Length;
+            Console.WriteLine($"Processing {numParticles} particles...");
+
+            Particle[] particles = new Particle[numParticles];
+            for (int i = 0; i < numParticles; i++)
             {
-                Console.WriteLine("Invalid input. Please enter 0 or 1.");
+                particles[i].Position = embeddingData.Positions[i];
+                particles[i].Velocity = Vector3.Zero;
             }
 
-            if (loadingMode == PositionLoadingMode.FromNPY)
-            {
-                Console.Write("Enter folder path containing image_embeddings.npy and file_paths.npy: ");
-                folderPath = Console.ReadLine();
-                while (!Directory.Exists(folderPath) || 
-                       !File.Exists(Path.Combine(folderPath, "image_embeddings.npy")) || 
-                       !File.Exists(Path.Combine(folderPath, "file_paths.npy")))
-                {
-                    Console.WriteLine("Invalid folder path or missing required files. Please try again:");
-                    folderPath = Console.ReadLine();
-                }
-
-                int maxImages;
-                Console.Write("Enter number of images to load (0 for all): ");
-                while (!int.TryParse(Console.ReadLine(), out maxImages) || maxImages < 0)
-                {
-                    Console.WriteLine("Please enter a valid number (0 or greater):");
-                }
-
-                var embeddingData = EmbeddingLoader.LoadFromFolder(folderPath, maxEntries: maxImages);
-                numParticles = embeddingData.Positions.Length;
-                Console.WriteLine($"Processing {numParticles} particles...");
-
-                Particle[] particles = new Particle[numParticles];
-                for (int i = 0; i < numParticles; i++)
-                {
-                    particles[i].Position = embeddingData.Positions[i];
-                    particles[i].Velocity = Vector3.Zero;
-                }
-
-                particleSimulator = new ParticleSimulator(particles, embeddingData.FilePaths);
-            }
-            else
-            {
-                do
-                {
-                    Console.Write($"Number of particles: ");
-                } while ((!int.TryParse(Console.ReadLine(), out numParticles)) || numParticles < 0);
-
-                Particle[] particles = new Particle[numParticles];
-                Random rng = new Random();
-                for (int i = 0; i < particles.Length; i++)
-                {
-                    particles[i].Position = new Vector3(
-                        rng.NextSingle() * 100 - 50,
-                        rng.NextSingle() * 100 - 50,
-                        -rng.NextSingle() * 100
-                    );
-                    particles[i].Velocity = Vector3.Zero;
-                }
-
-                particleSimulator = new ParticleSimulator(particles);
-            }
+            particleSimulator = new ParticleSimulator(particles, embeddingData.FilePaths);
 
             GC.Collect();
             base.OnLoad(e);
@@ -344,6 +320,7 @@ namespace Newtonian_Particle_Simulator
 
         protected override void OnUnload(EventArgs e)
         {
+            _skybox?.Dispose();
             _crosshair?.Dispose();
             _imGuiController?.Dispose();
             base.OnUnload(e);
